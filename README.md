@@ -1,182 +1,175 @@
-<img width="1243" height="238" alt="Screenshot 2026-10-14 121727" src="https://github.com/user-attachments/assets/6cfaa003-d88a-47f2-8ce3-ac3efca614a5" />
+# LSTK · Security Toolkit per Linux e Windows (v0.7.0)
 
+**Assessment di sicurezza automatico, in sola lettura, con risk assessment `rischio = probabilità × impatto`.**
+Gira su **Linux** e, da questa versione, anche su **Windows 10/11**: stesso comando, stessa console, stesso rapporto.
 
+| Fonte | Linux | Windows |
+|---|---|---|
+| Controlli nativi (sola lettura) | account, SSH, firewall, sysctl, permessi, SUID, logging, aggiornamenti… | Defender, firewall, Windows Update e fine supporto, UAC, BitLocker, Secure Boot, SMBv1, RDP/NLA, LSA/WDigest/NTLM, account e password… |
+| Integrità | `dpkg --verify` / `rpm -Va` | firma Authenticode degli eseguibili dei servizi |
+| Privilege escalation | SUID, world-writable, file orfani | servizi con percorso senza virgolette, cartelle del PATH scrivibili, avvio automatico sospetto |
+| [Nmap](https://nmap.org/) | porte e servizi esposti (loopback vs rete) | idem (TCP connect, oppure SYN con Npcap + amministratore) |
+| [Trivy](https://trivy.dev) | CVE di pacchetti e librerie, segreti, OS fuori supporto | librerie vulnerabili e segreti nel profilo utente |
+| [Lynis](https://cisofy.com/lynis/) | audit di hardening importato | — (non esiste per Windows; coperto dai controlli nativi) |
 
+> **Non è una certificazione** né un sostituto di un penetration test. Un controllo non conclusivo non è mai "sicuro": finisce tra i *non verificati* e rende la valutazione **parziale**. Vedi [Limiti](#limiti).
 
-# Linux Security Toolkit (LSTK) v0.6.0
+## Avvio rapido
 
-**Assessment di sicurezza automatico per macchine Linux, con risk assessment `rischio = probabilità × impatto`.**
-
-LSTK integra **più fonti di informazione** in un unico comando e riporta quanto rilevato in una tabella di rischio:
-
-| Fonte | Cosa contribuisce |
-|---|---|
-| Controlli nativi (Python, sola lettura) | account, SSH, firewall, kernel/sysctl, permessi, SUID, logging, aggiornamenti in sospeso… |
-| `dpkg --verify` / `rpm -Va` | integrità dei file installati rispetto ai pacchetti |
-| [Nmap](https://nmap.org/) | porte e servizi realmente esposti in rete (distingue loopback da interfacce di rete) |
-| [Trivy](https://trivy.dev) | CVE dei pacchetti e delle librerie, segreti nei file, OS fuori supporto |
-| [Lynis](https://cisofy.com/lynis/) | audit di hardening, importato come finding |
-
-> **Non è una certificazione** né un sostituto di un penetration test. Un controllo non conclusivo non viene mai presentato come "sicuro": finisce tra i *non verificati* e rende la valutazione **parziale**. Vedi [Limiti](#limiti).
-
-## Avvio rapido (un solo comando dopo il clone)
-
+**Linux**
 ```bash
-git clone (https://github.com/Pippo-Cappe/ITS-1-linux-security-toolkit.git)
-cd <ITS-1-linux-security-toolkit>
+git clone https://github.com/Filippo-Cappellini/ITS-1-linux-security-toolkit.git
+cd ITS-1-linux-security-toolkit
 ./run.sh            # al primo avvio esegue install.sh (chiede conferma prima di installare qualsiasi cosa)
 ```
 
-Nel prompt `lstk` scrivi `/scan` e conferma. Per una tabella senza console interattiva: `./run.sh scan --format table`.
-Se i permessi di esecuzione si perdono: `bash run.sh`.
+**Windows** (PowerShell; serve Python ≥ 3.10, es. `winget install Python.Python.3.12`)
+```powershell
+git clone https://github.com/Filippo-Cappellini/ITS-1-linux-security-toolkit.git
+cd ITS-1-linux-security-toolkit
+.\run.bat           # oppure doppio clic su run.bat; al primo avvio esegue install.ps1
+```
+`run.ps1` propone di riaprirsi come amministratore (finestra UAC) per la copertura completa; `.\run.ps1 -NoElevate` resta utente normale.
+
+Nel prompt `lstk ›` scrivi `/scan` e conferma. Senza console interattiva: `./run.sh scan --format table` (Linux) o `.\run.bat scan --format table` (Windows).
+
+## Novità della 0.7.0
+
+- **Windows**: oltre 40 controlli nativi (registro + cmdlet PowerShell `Get-*`), integrità con firme digitali, privilege escalation, Nmap e Trivy, installazione degli strumenti con **winget**.
+- **Nuova grafica**: console con logo, cruscotto del rischio (voto grande, barra della postura, barre per livello, matrice colorata), barra di avanzamento per modulo; rapporto HTML ridisegnato (tema chiaro/scuro, anello del voto, ciambella dei rischi, filtri per livello, schede espandibili). Tutto senza JavaScript.
+- **Storico e confronto**: ogni scansione dalla console viene salvata; `/history` mostra il trend della postura, `/diff` elenca rischi nuovi, risolti, peggiorati e migliorati.
+- **Correzioni suggerite**: `/fix ID` mostra i comandi per risolvere il problema (Linux o Windows). LSTK **non li esegue**.
+- **Export**: oltre a JSON e HTML, **SARIF 2.1.0** (GitHub code scanning, Azure DevOps), **CSV** (Excel, protetto dalla formula injection) e **Markdown**. `lstk export` rigenera un rapporto dallo storico senza ripetere la scansione.
+- `/search`, `/open` (apre l'ultimo rapporto HTML), ciclo di vita di Windows (fine supporto per versione ed edizione).
 
 ## Esempio di output
 
-Scansione reale (modalità `quick`, container di test):
+Scansione reale su Windows 11 (modalità `deep`, utente non amministratore):
 
 ```text
-Voto: C · postura 77/100 · rischio complessivo: high
-Rischi: critical: 0 · high: 2 · medium: 1 · low: 4 · Copertura conclusiva 88% · non verificati 2
-⚠ Valutazione PARZIALE: modalità quick, Trivy e Lynis non eseguiti
-
- ID        Rischio   P  I  P×I  Esito  Fonte   Controllo
- PKG-002   high      4  4   16  warn   native  Aggiornamenti pacchetti in sospeso
- FW-001    high      4  3   12  fail   native  Nessun firewall attivo rilevato
- LOG-001   medium    3  3    9  warn   native  Servizio di logging
- KRN-001   low       2  3    6  warn   native  Parametri kernel (sysctl)
+╭─ Risk assessment · PC ────────────────────────────────────────────────────╮
+│   █▀▀▄                         Rischi per livello                         │
+│   █  █                          critico   0 ░░░░░░░░░░░░░░░░░░            │
+│   █▄▄▀                             alto   4 ██████████░░░░░░░░            │
+│   voto D                          medio   2 █████░░░░░░░░░░░░░            │
+│  Postura 55/100                   basso   7 ██████████████████            │
+│  ████████████░░░░░░░░░░                                                   │
+│  Rischio complessivo  alto      Matrice probabilità × impatto  …          │
+╰───────────────────────────────────────────────────────────────────────────╯
+ WUPD-001   alto   4 4 16  ▲ warn  native  Aggiornamenti di Windows in sospeso
+ WPRIV-002  alto   3 4 12  ✘ fail  native  Cartelle del PATH di sistema scrivibili da utenti
+ WPRIV-001  medio  2 4  8  ▲ warn  native  Servizi con percorso non tra virgolette
 ```
 
-P = probabilità (1–5), I = impatto (1–5). Livelli: critical ≥ 20, high ≥ 12, medium ≥ 8, low ≥ 1. Metodologia completa: [docs/METHODOLOGY.md](docs/METHODOLOGY.md).
+P = probabilità (1–5), I = impatto (1–5). Livelli: critical ≥ 20, high ≥ 12, medium ≥ 8, low ≥ 1. Metodologia: [docs/METHODOLOGY.md](docs/METHODOLOGY.md).
 
-## Modalità di assessment
+## Modalità
 
-LSTK lavora **da dentro la macchina** (agent-less, in sola lettura). Nmap può inoltre valutare **dall'esterno** altri host (`--target`); non entra però automaticamente nella macchina remota (vedi [Sviluppi futuri](#sviluppi-futuri)).
-
-| Modalità | Controlli nativi | Integrità file | Nmap | Trivy | Lynis |
+| Modalità | Controlli nativi | Integrità | Nmap | Trivy | Lynis (Linux) |
 |---|---|---|---|---|---|
 | `quick` | base | no | top-1000 porte TCP | no | no |
-| `deep` | estesi (SUID, world-writable, orfani, servizi) | sì | tutte le porte TCP | no | no |
-| **`full`** (default) | estesi | sì | tutte le porte TCP + script `default` + UDP top-50 (se root) | sì | sì |
+| `deep` | estesi (Linux: SUID, world-writable, servizi · Windows: privilege escalation, avvio automatico) | sì | tutte le porte TCP | no | no |
+| **`full`** (default) | estesi | sì | tutte le porte + script `default` + UDP top-50 (se possibile) | sì | sì |
 
-## Requisiti
-
-**Sistema:** Linux (testato in container Ubuntu 24.04; Kali, Debian, Fedora, Rocky previsti, vedi [roadmap](ROADMAP.md)). Python ≥ 3.10.
-
-**Pacchetti** (li installa `install.sh`, oppure il programma li propone quando servono): `python3`, `python3-venv`, `python3-pip`, `nmap`, `lynis`, `iproute2` (comandi `ip`/`ss`) e [Trivy](https://trivy.dev) (scaricato dalla release ufficiale con SHA-256 fissato nel codice). Dipendenze Python: `typer`, `rich`.
-Nmap, Lynis e Trivy sono **opzionali**: se mancano, il modulo viene saltato e dichiarato nel rapporto.
-
-**Privilegi:** per l'audit completo serve root (`./run.sh` usa `sudo`). Senza root funziona, ma shadow, sudoers, `sshd -T`, regole firewall, UDP e parte di Trivy/Lynis non sono verificabili → valutazione parziale (voto massimo B).
-
-**Servizi:** nessun servizio deve essere attivo per far girare LSTK. Quelli presenti vengono *valutati*, non richiesti:
-- `systemd` (`systemctl`, `timedatectl`): serve ai controlli su servizi, logging, NTP; se manca quei controlli risultano `unknown`;
-- `sshd`, `ufw`/`firewalld`/nftables, `auditd`, `chrony`/`timesyncd`: se presenti vengono analizzati.
-
-**Rete:**
-- `github.com` (solo per installare Trivy) e i repository della distribuzione (solo per installare pacchetti);
-- **registry OCI di Trivy** (`mirror.gcr.io` / `ghcr.io`) per scaricare il database delle vulnerabilità: senza, le vulnerabilità risultano *non valutate*. In ambienti isolati: precaricare la cache su un host connesso (`trivy image --download-db-only`), copiarla e usare `--offline` (opz. `LSTK_TRIVY_CACHE_DIR`);
-- nessuna connessione ad altri servizi: Nmap contatta solo i bersagli indicati.
-
-## Dati da inserire per provare il sistema nella sua interezza
-
-Nessuna credenziale né API key. Parametri opzionali:
-
-| Cosa | Come | Note |
-|---|---|---|
-| Profilo | `/profile server` oppure `--profile server` | influenza severità/probabilità di alcuni controlli |
-| Bersaglio esterno | `/scan full --target 192.168.1.10` (anche CIDR ≤ /24, hostname) | richiede di digitare `AUTORIZZO`; in CLI `--authorized`. Solo sistemi per cui hai autorizzazione scritta |
-| Firma dei rapporti | `export LSTK_SIGNING_KEY='…'` (≥ 16 caratteri) | aggiunge HMAC-SHA256; chiave fuori dal repository |
-| Cartella rapporti | `LSTK_REPORT_DIR=/percorso` | default `./lstk-reports` (0700, file 0600) |
-| Timeout | `LSTK_TRIVY_TIMEOUT`, `LSTK_LYNIS_TIMEOUT`, `LSTK_INTEGRITY_TIMEOUT` | secondi |
-
-### Prova completa in una VM di laboratorio (usa-e-getta)
-
-1. `./run.sh` e poi `/scan` → baseline.
-2. Per vedere risultati più ricchi, in una VM **di test** crea condizioni deboli volute:
-   ```bash
-   sudo apt install -y vsftpd                                    # FTP in chiaro esposto → Nmap (high) + servizio legacy
-   echo "GITHUB_TOKEN=ghp_$(tr -dc A-Za-z0-9 </dev/urandom | head -c 36)" | sudo tee /root/demo.env   # finto segreto → Trivy
-   sudo cp /usr/bin/ischroot /tmp/ischroot.bak && echo x | sudo tee -a /usr/bin/ischroot             # binario alterato → integrità
-   ```
-3. Rilancia `/scan`, poi `/findings high`, `/details INT-001`, `/report all`, `lstk verify lstk-reports/audit-*.json`.
-4. Ripristina: `sudo cp /tmp/ischroot.bak /usr/bin/ischroot; sudo apt remove -y vsftpd; sudo rm /root/demo.env`.
-5. Da una seconda VM: `/scan full --target <IP della prima VM>` (valuta dall'esterno).
-
-## Comandi
+## Comandi della console
 
 ```text
-/scan [quick|deep|full] [--target T] [--no-nmap|--no-lynis|--no-trivy|--no-integrity] [--offline]
-/risk · /findings [issues|all|critical|high|medium|low|unverified] · /details ID
-/report [json|html|all] · /verify FILE
-/vuln · /integrity · /lynis        (singoli moduli)
-/doctor · /install [nmap|lynis|trivy|iproute2|all]
-/profile desktop|server · /checks · /status · /fix ID · /help · /exit
+Scansione   /scan [quick|deep|full] [--target T] [--no-nmap|--no-trivy|--no-integrity|--no-lynis] [--offline]
+            /vuln · /integrity · /lynis (solo Linux) · /profile desktop|server
+Risultati   /risk · /findings [issues|all|critical|high|medium|low|unverified] · /details ID · /fix ID · /search TESTO
+Rapporti    /report [json|html|sarif|csv|md|all] [--open] · /open · /history · /diff [A] [B] · /verify FILE
+Strumenti   /doctor · /install [nmap|trivy|lynis|iproute2|all] · /checks · /status · /help · /exit
 ```
 
-Modalità non interattiva (JSON su stdout, avanzamento su stderr):
+Modalità non interattiva (risultato su stdout, avanzamento su stderr):
 
 ```bash
-sudo .venv/bin/lstk scan --profile server --mode full --format table      # tabella di rischio
-sudo .venv/bin/lstk scan --mode full --save --fail-on high > out.json      # JSON + rapporti; exit 3 se rischio >= high
-lstk install trivy --yes ; lstk doctor ; lstk verify lstk-reports/audit-*.json
+lstk scan --profile server --mode full --format table           # tabella di rischio
+lstk scan --mode full --save --history --fail-on high > out.json # JSON + rapporti + storico; exit 3 se rischio >= high
+lstk scan --format sarif > lstk.sarif                            # per GitHub code scanning
+lstk history ; lstk diff ; lstk export lstk-reports/history/scan-XXXX.json --format html
+lstk install trivy --yes ; lstk doctor ; lstk verify lstk-reports/audit-XXXX.json
 ```
 Exit code: `0` ok · `1` errore · `2` argomenti/autorizzazione non validi · `3` soglia `--fail-on` superata.
 
-## Sicurezza dello strumento (in sintesi)
+## Requisiti
 
-- `/scan` è **in sola lettura**. L'unico modulo che modifica il sistema è l'installer, e solo dopo conferma esplicita (mostra i comandi esatti; in CLI richiede `--yes`/`--install-missing`).
-- Trivy: release a versione fissata e **SHA-256 fissato nel codice**; se non coincide non si installa nulla. Flag `--offline-scan`; il contenuto dei segreti non viene mai riportato.
-- Nessuna shell, PATH ristretto a directory di sistema, ambiente minimo, timeout con kill del gruppo di processi.
+- **Python ≥ 3.10**; dipendenze Python: `typer`, `rich`.
+- **Linux**: testato su Ubuntu 22.04/24.04 (Debian, Kali, Fedora, Rocky previsti). Pacchetti installati da `install.sh` su richiesta: `nmap`, `lynis`, `iproute2`, Trivy (release ufficiale con SHA-256 fissato nel codice).
+- **Windows**: Windows 10/11 con PowerShell 5.1 (incluso). Nmap e Trivy opzionali, installabili con `winget` da `install.ps1` o `/install`. Per scansioni SYN/UDP serve [Npcap](https://npcap.com/) (incluso nell'installer di Nmap) e l'amministratore.
+- **Privilegi**: root (Linux) o amministratore (Windows) per l'audit completo. Senza funziona, ma la valutazione è **parziale** (voto massimo B).
+- **Rete**: nessuna connessione propria. Nmap contatta solo i bersagli indicati; Trivy scarica il database pubblico delle vulnerabilità (`--offline` per usare solo la cache); su Windows il controllo degli aggiornamenti usa i dati **locali** di Windows Update.
+
+## Parametri utili
+
+| Cosa | Come | Note |
+|---|---|---|
+| Profilo | `/profile server` o `--profile server` | influenza severità e probabilità di alcuni controlli |
+| Bersaglio esterno | `/scan full --target 192.168.1.10` (anche CIDR ≤ /24) | richiede di digitare `AUTORIZZO`; in CLI `--authorized`. Solo sistemi per cui hai autorizzazione scritta |
+| Firma dei rapporti | `LSTK_SIGNING_KEY` (≥ 16 caratteri) | aggiunge HMAC-SHA256 |
+| Cartella rapporti | `LSTK_REPORT_DIR` | default `./lstk-reports` (Linux 0700, file 0600) |
+| Storico | `LSTK_HISTORY_DIR`, `LSTK_NO_HISTORY=1` | default `lstk-reports/history` |
+| Trivy | `LSTK_TRIVY_TARGET`, `LSTK_TRIVY_CACHE_DIR`, `LSTK_TRIVY_TIMEOUT` | su Windows il bersaglio predefinito è il profilo utente |
+| Timeout | `LSTK_LYNIS_TIMEOUT`, `LSTK_INTEGRITY_TIMEOUT` | secondi |
+
+## Prova in laboratorio
+
+**Linux** (VM usa-e-getta): `sudo apt install -y vsftpd` (FTP in chiaro → Nmap), un finto token in `/root/demo.env` (→ Trivy), un byte aggiunto a `/usr/bin/ischroot` dopo averne fatto una copia (→ integrità). Poi `/scan`, `/findings high`, `/fix INT-001`, `/report all`, `/diff`.
+
+**Windows** (VM di test, PowerShell come amministratore): `Set-NetFirewallProfile -Profile Public -Enabled False` (→ WFW-001), `Enable-LocalUser Guest` (→ WACC-001), `reg add HKLM\SYSTEM\CurrentControlSet\Control\SecurityProviders\WDigest /v UseLogonCredential /t REG_DWORD /d 1 /f` (→ WLSA-001). Rilancia `/scan`, guarda `/diff`, poi ripristina con i comandi di `/fix`.
+
+## Sicurezza dello strumento
+
+- `/scan` è **in sola lettura** su entrambi i sistemi (su Windows solo letture del registro e cmdlet `Get-*`, verificato dai test). L'unico modulo che modifica il sistema è l'installer, solo dopo conferma esplicita.
+- Nessuna shell; binari risolti solo in directory di sistema (anti PATH-hijacking); ambiente minimo; timeout con kill dell'albero di processi. Gli script PowerShell passano come `-EncodedCommand` (nessun problema di quoting o iniezione) e compaiono nel rapporto con un'etichetta leggibile.
 - Bersagli non locali solo con autorizzazione dichiarata; input validato.
-- Rapporti 0600, SHA-256 + HMAC opzionale (`lstk verify`), elenco dei comandi eseguiti, limiti dichiarati.
+- Rapporti con SHA-256 + HMAC opzionale (`lstk verify`), elenco dei comandi eseguiti, limiti dichiarati. HTML con CSP `default-src 'none'` e nessuno script; CSV protetto dalla formula injection.
 
-Dettagli: [SECURITY.md](SECURITY.md). I rapporti contengono dati sensibili (host, account, porte, configurazioni): trattarli come riservati.
+Dettagli in [SECURITY.md](SECURITY.md). I rapporti contengono dati sensibili: trattarli come riservati.
 
 ## Test
 
 ```bash
-.venv/bin/pip install -e ".[test]" && .venv/bin/pytest -q     # 108 test, nessun comando reale (runner simulato)
+pip install -e ".[test]" && pytest -q
 ```
+149 test, nessun comando reale (runner, registro e PowerShell simulati). I controlli Windows sono testati anche su Linux; i test specifici di una piattaforma vengono saltati sull'altra.
 
 ## Struttura
 
 ```
-install.sh / run.sh   bootstrap dopo git clone / avvio con sudo
-lstk/audit.py         controlli nativi          lstk/nmapscan.py   Nmap: validazione, parsing, regole
-lstk/trivy.py         CVE e segreti             lstk/lynis.py      esecuzione e import
-lstk/integrity.py     dpkg/rpm verify           lstk/risk.py       probabilità × impatto, voto
-lstk/scan.py          orchestratore             lstk/report.py     JSON/HTML, hash, HMAC
-lstk/installer.py     installazione guidata     lstk/runner.py     esecuzione sicura
-lstk/remediation.py   primitive file (non collegate ai finding)
+run.sh / install.sh                avvio e installazione su Linux
+run.bat / run.ps1 / install.ps1    avvio e installazione su Windows
+lstk/audit.py      controlli nativi Linux        lstk/winaudit.py   controlli nativi Windows
+lstk/nmapscan.py   Nmap                          lstk/trivy.py      CVE e segreti
+lstk/integrity.py  dpkg/rpm verify               lstk/lynis.py      Lynis (Linux)
+lstk/scan.py       orchestratore                 lstk/risk.py       probabilità × impatto, voto
+lstk/report.py     JSON/HTML/SARIF/CSV/MD        lstk/history.py    storico e confronto
+lstk/fixes.py      comandi di correzione suggeriti
+lstk/installer.py  installazione guidata (apt/dnf/zypper/pacman, winget)
+lstk/runner.py     esecuzione sicura dei comandi lstk/osinfo.py     piattaforma e privilegi
 ```
 
 ## Limiti
 
-- Valutazione best-effort: dipende da privilegi, distribuzione e strumenti installati.
-- Una CVE presente non implica che sia sfruttabile; il voto non analizza raggiungibilità/exploitability. Nmap non correla i servizi alle CVE. Solo IPv4.
-- L'integrità dei file non rileva file *aggiunti* né rootkit e può dare falsi positivi (es. `update-alternatives`); i segreti sono rilevati per pattern.
-- Nessuna baseline CIS/SCAP né verifica di conformità (ISO 27001, PCI-DSS…).
-- Le correzioni automatiche **non** sono implementate, per scelta: `/fix` non modifica nulla.
-- Assessment "da fuori e poi dentro" (accesso remoto automatico) non implementato.
+- Valutazione best-effort: dipende da privilegi, sistema e strumenti installati.
+- Una CVE presente non implica che sia sfruttabile. Nmap non correla i servizi alle CVE. Solo IPv4.
+- Nmap eseguito sulla macchina stessa vede le porte in ascolto anche se il firewall le filtra verso l'esterno: per l'esposizione reale scansionare da un altro host.
+- Linux: l'integrità non rileva file *aggiunti* né rootkit. Windows: si verificano le firme degli eseguibili dei servizi, non tutti i file di sistema (`sfc /scannow`); Trivy non analizza i componenti del sistema operativo (coperti da Windows Update).
+- Su Windows la policy password letta è quella **locale**; account Microsoft/Entra ID seguono le proprie regole. La data di fine supporto si basa su una tabella nel codice (build note).
+- Nessuna baseline CIS/SCAP né verifica di conformità. Le correzioni **non** vengono applicate: `/fix` mostra soltanto i comandi.
 - Un host compromesso può falsare i risultati; hash/HMAC provano la non alterazione del rapporto, non la veridicità dei dati.
 
 ## Sviluppi futuri
 
-Elenco completo in [ROADMAP.md](ROADMAP.md). Principali:
-
-- **Assessment remoto agent-less**: scansione dall'esterno con Nmap seguita da ingresso automatico via SSH (con credenziali/chiavi fornite dall'operatore) per eseguire i controlli interni.
-- Baseline **CIS/SCAP** e controlli di conformità.
-- Correlazione CVE per i servizi rilevati da Nmap; analisi di raggiungibilità/exploitability (es. EPSS/KEV).
-- Storico e confronto tra scansioni (nuovi/risolti, trend); esecuzione pianificata.
-- Rilevamento rootkit e file aggiunti (AIDE, rkhunter/chkrootkit); scansione di immagini container/Kubernetes con Trivy.
-- Correzioni guidate per singolo finding, con validazione per distribuzione e rollback.
-- Supporto IPv6; export SARIF/CSV; test d'integrazione su Kali, Debian, Ubuntu, Fedora, Rocky; supply chain (lockfile con hash, SBOM, rilasci firmati).
+Elenco completo in [ROADMAP.md](ROADMAP.md): assessment remoto agent-less (SSH / WinRM), priorità con EPSS/CISA KEV, baseline CIS, correlazione CVE dei servizi Nmap, IPv6, macOS, esecuzione pianificata.
 
 ## Riferimenti
 
-- Metodologia di rischio: [NIST SP 800-30 Rev. 1 – Guide for Conducting Risk Assessments](https://csrc.nist.gov/pubs/sp/800/30/r1/final) · [OWASP Risk Rating Methodology](https://owasp.org/www-community/OWASP_Risk_Rating_Methodology) · ISO/IEC 27005
-- Strumenti: [Nmap](https://nmap.org/book/man.html) · [Lynis](https://cisofy.com/lynis/) · [Trivy](https://trivy.dev) ([repo](https://github.com/aquasecurity/trivy))
-- Vulnerabilità: [NVD](https://nvd.nist.gov/) · [CVE](https://www.cve.org/) · [CVSS](https://www.first.org/cvss/)
-- Hardening: [CIS Benchmarks](https://www.cisecurity.org/cis-benchmarks) · [CISOfy – controlli Lynis](https://cisofy.com/lynis/controls/)
+- Metodologia: [NIST SP 800-30 Rev. 1](https://csrc.nist.gov/pubs/sp/800/30/r1/final) · [OWASP Risk Rating](https://owasp.org/www-community/OWASP_Risk_Rating_Methodology) · ISO/IEC 27005
+- Strumenti: [Nmap](https://nmap.org/book/man.html) · [Lynis](https://cisofy.com/lynis/) · [Trivy](https://trivy.dev) · [SARIF 2.1.0](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html)
+- Hardening: [CIS Benchmarks](https://www.cisecurity.org/cis-benchmarks) · [Microsoft Security Baselines](https://learn.microsoft.com/windows/security/operating-system-security/device-management/windows-security-configuration-framework/windows-security-baselines) · [Ciclo di vita di Windows](https://learn.microsoft.com/lifecycle/products/windows-11-home-and-pro)
 - Librerie: [Typer](https://typer.tiangolo.com/) · [Rich](https://rich.readthedocs.io/)
 
+## Licenza
 
+Da definire dal maintainer prima della pubblicazione.
