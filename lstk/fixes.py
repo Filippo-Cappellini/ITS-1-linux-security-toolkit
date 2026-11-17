@@ -126,6 +126,16 @@ def suggestions(fid: str, platform_name: str) -> dict:
                     "note": "Su Windows Trivy analizza librerie di progetti e applicazioni nel profilo utente."}
         return {"commands": ["sudo apt install --only-upgrade <PACCHETTO>   # Debian/Ubuntu", "sudo dnf upgrade <PACCHETTO>                # Fedora/RHEL"],
                 "note": "Per librerie di applicazioni (npm, pip, Maven…) aggiornare la dipendenza nel progetto."}
+    if key.startswith(("AV-DET", "AV-TEST", "AV-HEU")):
+        return {"commands": ["lstk quarantine add \"<FILE>\"", "lstk quarantine list", "lstk quarantine restore <ID>   # se era un falso positivo"],
+                "note": "La quarantena sposta il file in una cartella privata, non eseguibile e ripristinabile. "
+                        "Prima di cancellarlo definitivamente annotare lo SHA-256 per eventuali analisi."}
+    if key in ("AV-CLAM-DB", "AV-000"):
+        if platform_name == "windows":
+            return {"commands": ["Update-MpSignature", "Get-MpComputerStatus | Select-Object AntivirusEnabled, AntivirusSignatureAge",
+                                 "start windowsdefender:"], "note": "Se Defender è disattivato da un altro antivirus, aggiornare quello."}
+        return {"commands": ["sudo freshclam", "sudo systemctl enable --now clamav-freshclam"],
+                "note": "Su RHEL/Fedora serve il pacchetto clamav-update e, se presente, va tolta la riga 'Example' da /etc/freshclam.conf."}
     if key.startswith("TRV-SEC"):
         return {"commands": [], "note": "Revocare/ruotare il segreto presso il servizio che lo ha emesso, poi rimuoverlo dal file (e dalla cronologia git se presente)."}
     return {"commands": [], "note": ""}

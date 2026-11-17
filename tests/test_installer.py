@@ -47,7 +47,7 @@ class Spy:
 
 def test_missing_tools_uses_runner(fake):
     r = fake(binaries=["nmap"])
-    assert installer.missing_tools(r) == ["lynis", "iproute2", "trivy"]
+    assert installer.missing_tools(r) == ["lynis", "iproute2", "clamav", "trivy"]
 
 
 def test_plan_apt_only_missing_packages(fake):
@@ -148,3 +148,10 @@ def test_trivy_unsupported_arch_and_non_https(fake):
 
 def test_pinned_hashes_look_like_sha256():
     assert all(len(v) == 64 and int(v, 16) >= 0 for v in installer.TRIVY_SHA256.values())
+
+
+def test_clamav_packages_per_manager(fake):
+    assert plan_install(fake(binaries=["dnf"]), ["clamav"])[0].argv == ["/usr/bin/dnf", "install", "-y", "clamav", "clamav-update"]
+    steps = plan_install(fake(binaries=["apt-get"]), ["clamav", "nmap"])
+    assert steps[1].argv == ["/usr/bin/apt-get", "install", "-y", "clamav", "nmap"]
+    assert installer._planned(plan_install(fake(binaries=["dnf"]), ["clamav"])) == {"clamav"}

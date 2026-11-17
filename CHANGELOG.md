@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.0
+### Nuovo
+- **Antivirus** (`lstk/malware.py`): ricerca di malware con più motori, risultati uniti per file come finding del risk assessment.
+  - **Microsoft Defender** (`MpCmdRun.exe`, sempre con `-DisableRemediation`: la scansione non sposta né cancella nulla) e **ClamAV** (`clamscan`, senza seguire i link simbolici; avviso se le firme hanno più di 7 giorni).
+  - **Motore interno** sempre disponibile: file di test EICAR, elenchi di hash SHA-256 dell'utente (`--hashes`, `LSTK_MALWARE_HASHES` o la cartella delle firme; compatibili con gli export di MalwareBazaar), euristiche a bassa confidenza (doppia estensione, carattere RLO nel nome, eseguibili ELF in `/tmp`, `/var/tmp`, `/dev/shm`).
+  - Finding: `AV-DET` (malware, critico), `AV-TEST` (EICAR), `AV-HEU` (sospetto), `AV-000` (nessun motore con firme), `AV-CLAM-DB` (firme vecchie o assenti).
+- **Quarantena** (`lstk/quarantine.py`): il file viene spostato in una cartella privata, offuscato (non eseguibile e non più rilevato), con metadati e SHA-256; ripristino senza mai sovrascrivere, eliminazione definitiva. Solo su conferma esplicita.
+- Console: `/av [quick|full|PERCORSO…] [--native] [--hashes FILE]`, `/av update`, `/quarantine [add|restore|delete]`. CLI: `lstk av` (`--full`, `--update`, `--quarantine`, `--format json`, `--fail-on-detect` → exit 4) e `lstk quarantine`.
+- `/scan full` include l'antivirus sui percorsi a rischio (`--no-malware` per escluderlo); `/install clamav` su Linux; Defender in `/doctor`; `/fix` per i finding antivirus.
+
 ## 0.7.0
 ### Nuovo
 - **Supporto Windows 10/11** (`lstk/winaudit.py`): oltre 40 controlli nativi in sola lettura (registro e cmdlet PowerShell `Get-*`): Windows Update e aggiornamenti in sospeso, fine supporto per build/edizione, Defender (tempo reale, firme, Tamper Protection, esclusioni rischiose, PUA, ASR) e antivirus di terze parti, firewall per profilo, UAC, Guest/Administrator, account senza password, membri Administrators, policy password e blocco, WDigest, protezione LSA, NTLMv1/LM, Credential Guard/VBS, BitLocker, Secure Boot, SMBv1 e firma SMB, condivisioni, RDP/NLA, WinRM, OpenSSH, servizi legacy, LLMNR, AutoRun, SmartScreen, PowerShell 2.0 e Script Block Logging, porte in ascolto con processo.

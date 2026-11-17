@@ -21,7 +21,7 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 
-from . import __version__, history, installer
+from . import __version__, history, installer, malware, quarantine
 from .fixes import suggestions
 from .nmapscan import TargetError
 from .osinfo import IS_WINDOWS, admin_word, system_name
@@ -32,7 +32,7 @@ from .scan import MODE_TABLE, MODES, PROFILES, Assessment, AuthorizationError, S
 
 app = typer.Typer(add_completion=False, no_args_is_help=False, help="LSTK Security Toolkit (Linux e Windows)")
 console = Console(highlight=False)
-STATE: dict = {"profile": "desktop", "assessment": None, "last_scan": None, "installs": [], "last_html": None}
+STATE: dict = {"profile": "desktop", "assessment": None, "last_scan": None, "installs": [], "last_html": None, "av_findings": []}
 
 OS_LABEL = "Windows" if IS_WINDOWS else "Linux"
 LOGO_LINES = [
@@ -61,10 +61,15 @@ HELP_GROUPS = [
     ("Scansione", [
         ("/scan [quick|deep|full]", "Risk assessment completo del sistema (default: full)"),
         ("   --target IP|CIDR|host", "Scansiona anche bersagli non locali (serve autorizzazione)"),
-        ("   --no-nmap --no-trivy --no-integrity" + ("" if IS_WINDOWS else " --no-lynis"), "Esclude un modulo (valutazione parziale)"),
+        ("   --no-nmap --no-trivy --no-malware --no-integrity" + ("" if IS_WINDOWS else " --no-lynis"), "Esclude un modulo (valutazione parziale)"),
         ("   --offline", "Trivy usa solo il database in cache"),
         ("/vuln · /integrity" + ("" if IS_WINDOWS else " · /lynis"), "Esegue un singolo modulo"),
         ("/profile desktop|server", "Mostra o cambia profilo"),
+    ]),
+    ("Antivirus", [
+        ("/av [quick|full|PERCORSO…]", "Cerca malware (quick: percorsi a rischio, full: tutto il disco)"),
+        ("/av update", "Aggiorna le firme (freshclam" + (" / Defender)" if IS_WINDOWS else ")")),
+        ("/quarantine [add FILE|restore ID|delete ID]", "Quarantena: elenco, sposta, ripristina, elimina"),
     ]),
     ("Risultati", [
         ("/risk", "Cruscotto: voto, postura, matrice 5×5, rischi principali"),
@@ -102,7 +107,7 @@ def logo() -> Text:
         t.append(line + "\n", style=f"bold {col}")
     t.append("SECURITY TOOLKIT", style="bold white")
     t.append(f"  v{__version__}\n", style="dim")
-    t.append("Linux & Windows · Risk assessment · Nmap · Trivy · Lynis", style="#9aa5b8")
+    t.append("Linux & Windows · Risk assessment · Antivirus · Nmap · Trivy · Lynis", style="#9aa5b8")
     return t
 
 
@@ -284,7 +289,7 @@ def wanted_tools(opts: ScanOptions) -> list[str]:
     if IS_WINDOWS:
         return (["nmap"] if opts.use_nmap else []) + (["trivy"] if opts.trivy_enabled() else [])
     return (["iproute2"] + (["nmap"] if opts.use_nmap else []) + (["lynis"] if opts.lynis_enabled() else [])
-            + (["trivy"] if opts.trivy_enabled() else []))
+            + (["trivy"] if opts.trivy_enabled() else []) + (["clamav"] if opts.malware_enabled() else []))
 
 
 def ensure_tools(runner: Runner, wanted: list[str], context: str = "") -> bool:
@@ -335,6 +340,9 @@ def doctor(runner: Runner) -> None:
     for b, why in extra:
         path = runner.which(b)
         table.add_row(b, "[#51cf66]presente[/]" if path else "[dim]assente[/]", _e(path or "-"), why)
+    if IS_WINDOWS:
+        mp = malware.defender_exe()
+        table.add_row("defender", "[#51cf66]presente[/]" if mp else "[dim]assente[/]", _e(mp or "-"), "antivirus (MpCmdRun, scansione senza rimozione)")
     console.print(table)
     if IS_WINDOWS:
         npcap = os.path.isdir(os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "Npcap"))
@@ -360,11 +368,13 @@ def parse_scan_args(args: list[str]) -> ScanOptions:
     p.add_argument("--no-lynis", action="store_true")
     p.add_argument("--no-trivy", action="store_true")
     p.add_argument("--no-integrity", action="store_true")
+    p.add_argument("--no-malware", action="store_true")
     p.add_argument("--offline", action="store_true")
     ns = p.parse_args(args)
     return ScanOptions(profile=STATE["profile"], mode=ns.mode, targets=ns.target, use_nmap=not ns.no_nmap,
                        use_lynis=False if ns.no_lynis else None, use_trivy=False if ns.no_trivy else None,
-                       use_integrity=False if ns.no_integrity else None, offline=ns.offline)
+                       use_integrity=False if ns.no_integrity else None, offline=ns.offline,
+                       use_malware=False if ns.no_malware else None)
 
 
 def describe_plan(opts: ScanOptions, runner: Runner, targets) -> str:
@@ -388,13 +398,18 @@ def describe_plan(opts: ScanOptions, runner: Runner, targets) -> str:
         lines.append(f"  [#4dabf7]●[/] Trivy: vulnerabilità e segreti in {_e(trivy_target())}{miss('trivy')} [dim](può richiedere diversi minuti)[/dim]")
         lines.append("    [dim]" + ("database in cache locale, nessun download" if opts.offline else
                                      "scarica il database pubblico delle vulnerabilità; nessun file viene inviato; il contenuto dei segreti non viene riportato") + "[/dim]")
+    if opts.malware_enabled():
+        engines = ["Defender" if malware.defender_exe() else "", "ClamAV" if runner.which("clamscan") else "", "motore interno LSTK"]
+        lines.append(f"  [#4dabf7]●[/] Antivirus ({', '.join(e for e in engines if e)}) su: {_e(', '.join(malware.default_targets('quick'))[:300])}")
+        lines.append("    [dim]solo rilevamento: nulla viene spostato o cancellato senza conferma (/quarantine)[/dim]")
     if opts.lynis_enabled() and not IS_WINDOWS:
         lines.append(f"  [#4dabf7]●[/] Lynis: audit system{miss('lynis')} [dim](può richiedere alcuni minuti)[/dim]")
     return "\n".join(lines)
 
 
 def _phases(opts: ScanOptions) -> int:
-    return 2 + int(opts.integrity_enabled()) + int(opts.use_nmap) + int(opts.trivy_enabled()) + int(opts.lynis_enabled() and not IS_WINDOWS)
+    return (2 + int(opts.integrity_enabled()) + int(opts.use_nmap) + int(opts.trivy_enabled()) + int(opts.malware_enabled())
+            + int(opts.lynis_enabled() and not IS_WINDOWS))
 
 
 def print_modules(a: Assessment):
@@ -555,7 +570,7 @@ def show_diff(args: list[str]):
 
 
 def show_fix(fid: str, a: Optional[Assessment]):
-    m = next((f for f in (a.findings if a else []) if f.id.lower() == fid.lower()), None)
+    m = next((f for f in _known_findings(a) if f.id.lower() == fid.lower()), None)
     real = m.id if m else fid.upper()
     sug = suggestions(real, system_name())
     parts: list = []
@@ -599,6 +614,7 @@ CHECKS_LINUX = [
     ("integrità file", "dpkg --verify / rpm -Va; file world-writable e orfani (deep/full)"),
     ("vulnerabilità (Trivy)", "CVE di pacchetti OS e librerie, segreti nei file, OS fuori supporto (full)"),
     ("rete (Nmap)", "porte TCP (UDP top-50 come root in full), servizi/versioni, esposizione loopback vs rete"),
+    ("antivirus (full, /av)", "ClamAV + motore interno (EICAR, elenchi di hash, euristiche); quarantena ripristinabile"),
     ("Lynis", "audit completo importato come finding (warning/suggerimenti, hardening index)"),
 ]
 CHECKS_WINDOWS = [
@@ -615,6 +631,7 @@ CHECKS_WINDOWS = [
     ("privilege escalation (deep/full)", "percorsi dei servizi senza virgolette, cartelle del PATH scrivibili, programmi in avvio automatico"),
     ("integrità (deep/full)", "firma Authenticode degli eseguibili dei servizi"),
     ("vulnerabilità (Trivy, full)", "librerie vulnerabili e segreti nei file del profilo utente"),
+    ("antivirus (full, /av)", "Microsoft Defender (senza rimozione automatica) + ClamAV se presente + motore interno; quarantena ripristinabile"),
     ("rete (Nmap)", "porte TCP, servizi/versioni, esposizione loopback vs rete (SYN/UDP con Npcap e amministratore)"),
 ]
 
@@ -657,6 +674,182 @@ def _run_single_module(cmd: str, args: list[str]) -> None:
         score_finding(f)
     console.print(_e(label))
     show_findings(_sorted([f for f in fs if f.status in ("fail", "warn", "unknown", "manual")]), "Risultati")
+
+
+# --------------------------------------------------------------------------- antivirus e quarantena
+def _known_findings(a: Optional[Assessment]) -> list:
+    """Finding dell'ultimo /scan più quelli dell'ultimo /av (per /details e /fix)."""
+    return (list(a.findings) if a else []) + list(STATE["av_findings"])
+
+
+def parse_av_args(args: list[str]) -> argparse.Namespace:
+    p = _Parser(prog="/av", add_help=False)
+    p.add_argument("items", nargs="*")
+    p.add_argument("--native", action="store_true")
+    p.add_argument("--hashes", action="append", default=[])
+    ns = p.parse_args(args)
+    ns.mode = "quick"
+    if ns.items and ns.items[0].lower() in malware.MODES:
+        ns.mode = ns.items.pop(0).lower()
+    return ns
+
+
+def av_update(runner: Runner, confirm: bool = True, log=None) -> bool:
+    """Aggiorna le firme (freshclam / Defender): modifica solo i database degli antivirus."""
+    say = log or (lambda m: console.print(f"[dim]{_e(m)}[/dim]"))
+    cmds = malware.update_commands(runner)
+    if not cmds:
+        say("Nessun antivirus da aggiornare: " + ("Defender non trovato." if IS_WINDOWS else "installare ClamAV con /install clamav."))
+        return False
+    if not IS_WINDOWS:
+        try:
+            cmds = [installer._privileged(c, is_root(), runner) for c in cmds]
+        except installer.InstallError as exc:
+            say(str(exc))
+            return False
+    if confirm:
+        console.print(Panel("\n".join(f"[dim]{_e(' '.join(c))}[/dim]" for c in cmds) +
+                            "\n\nScarica le firme ufficiali e aggiorna SOLO il database dell'antivirus.",
+                            title="Aggiornamento firme", border_style="#4dabf7", box=box.ROUNDED))
+        if not Confirm.ask("Procedere?", default=True):
+            return False
+    ok = True
+    for c in cmds:
+        say("→ " + " ".join(c))
+        rc = installer._exec(c, to_stderr=log is not None)
+        if rc != 0:
+            ok = False
+            say(f"terminato con codice {rc}" + ("" if IS_WINDOWS else
+                " (se il servizio clamav-freshclam è attivo aggiorna già da solo e tiene bloccato il database)"))
+    return ok
+
+
+def _av_engines(native_only: bool) -> tuple[str, ...]:
+    return ("lstk",) if native_only else ("clamav", "defender", "lstk")
+
+
+def show_av(out) -> None:
+    t = Table.grid(padding=(0, 1))
+    t.add_column()
+    t.add_column(style="bold", no_wrap=True)
+    t.add_column(style="dim")
+    for e in out.engines:
+        t.add_row(MODULE_ICON.get(e.status, "•"), f"{e.engine} [dim]{e.status}[/]", _e(e.detail))
+    console.print(Panel(t, title="Motori antivirus", title_align="left", border_style="#3b5bdb", box=box.ROUNDED))
+    issues = [f for f in out.findings if f.status in ("fail", "warn", "unknown", "manual")]
+    if issues:
+        show_findings(_sorted(issues), "Antivirus")
+    else:
+        console.print("[#51cf66]✔ Nessun malware trovato.[/]")
+
+
+def offer_quarantine(dets) -> None:
+    files = malware.quarantinable(dets)
+    if not files:
+        return
+    console.print(Panel("\n".join(f"  • {_e(p)}" for p in files) +
+                        "\n\nI file vengono spostati in una cartella privata, resi non eseguibili e restano ripristinabili (/quarantine restore ID).",
+                        title=f"{len(files)} file con malware", border_style="red", box=box.ROUNDED))
+    if not Confirm.ask("Metterli in quarantena?", default=False):
+        console.print("[dim]Nessun file spostato. Puoi farlo dopo con /quarantine add FILE.[/dim]")
+        return
+    names: dict = {}
+    for d in dets:
+        names.setdefault(os.path.normcase(os.path.abspath(d.path)), f"{d.engine}: {d.name}")
+    for p in files:
+        try:
+            it = quarantine.add(p, reason=names.get(os.path.normcase(os.path.abspath(p)), ""), engine="lstk")
+            console.print(f"[#51cf66]✔[/] {_e(p)} → quarantena [bold]{it.id}[/]")
+        except quarantine.QuarantineError as exc:
+            console.print(f"[#ff6b6b]✘[/] {_e(p)}: {_e(exc)}")
+
+
+def do_av(args: list[str]) -> None:
+    runner = Runner()
+    if args and args[0].lower() == "update":
+        av_update(runner)
+        return
+    try:
+        av = parse_av_args(args)
+    except _ArgError as exc:
+        console.print(f"[red]Argomenti non validi:[/red] {_e(exc)}. Uso: /av [quick|full] [PERCORSO…] [--native] [--hashes FILE]")
+        return
+    if not IS_WINDOWS and not av.native and not runner.which("clamscan"):
+        ensure_tools(runner, ["clamav"], "motore antivirus con firme per /av")
+    targets = av.items or malware.default_targets(av.mode)
+    missing = [t for t in targets if not os.path.exists(t)]
+    if missing:
+        console.print(f"[red]Percorsi inesistenti:[/red] {_e(', '.join(missing))}")
+        return
+    engines = [n for n, ok in (("Defender", IS_WINDOWS and malware.defender_exe()), ("ClamAV", runner.which("clamscan")),
+                               ("motore interno LSTK", True)) if ok and (not av.native or n.startswith("motore"))]
+    note = ("scansione completa del disco: può richiedere molto tempo" if av.mode == "full" and not av.items
+            else "solo lettura: nulla viene spostato senza conferma")
+    console.print(Panel(f"Motori: [bold]{_e(', '.join(engines))}[/bold]\nPercorsi: {_e(', '.join(targets))}\n[dim]{note}[/dim]",
+                        title="Scansione antivirus", border_style="#4dabf7", box=box.ROUNDED))
+    if not Confirm.ask("Avviare la scansione?", default=True):
+        return
+    from .risk import score_finding
+    try:
+        with console.status("[cyan]Scansione in corso…") as status:
+            out = malware.run_malware(runner, targets, mode=av.mode, engines=_av_engines(av.native), extra_hashes=av.hashes,
+                                      progress=lambda m: status.update(f"[cyan]{_e(m)}"))
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Scansione interrotta.[/yellow]")
+        return
+    except ValueError as exc:
+        console.print(f"[red]Errore:[/red] {_e(exc)}")
+        return
+    for f in out.findings:
+        score_finding(f)
+    STATE["av_findings"] = out.findings
+    show_av(out)
+    offer_quarantine(out.detections)
+    console.print("[dim]/details ID dettaglio · /fix ID cosa fare · /quarantine elenco dei file in quarantena[/dim]")
+
+
+def show_quarantine() -> None:
+    try:
+        its, d = quarantine.items(), quarantine.quarantine_dir()
+    except quarantine.QuarantineError as exc:
+        console.print(f"[red]{_e(exc)}[/red]")
+        return
+    if not its:
+        console.print(f"[dim]Quarantena vuota ({_e(d)}).[/dim]")
+        return
+    table = Table(title=f"Quarantena — {len(its)}", caption=_e(str(d)), box=box.ROUNDED, border_style="#3b5bdb", header_style="bold #9aa5b8")
+    for col in ("ID", "Data", "File originale", "Motivo", "Byte"):
+        table.add_column(col, overflow="fold", no_wrap=col in ("ID", "Byte"))
+    for it in its:
+        table.add_row(it.id, it.quarantined_at[:19].replace("T", " "), _e(it.original_path), _e(it.reason), str(it.size))
+    console.print(table)
+
+
+def do_quarantine(args: list[str]) -> None:
+    action = args[0].lower() if args else "list"
+    try:
+        if action == "list":
+            show_quarantine()
+        elif action == "add" and len(args) >= 2:
+            path = " ".join(args[1:])
+            if Confirm.ask(f"Spostare in quarantena {_e(path)}?", default=False):
+                it = quarantine.add(path, reason="aggiunto manualmente")
+                console.print(f"[#51cf66]✔ In quarantena con ID {it.id}[/] (SHA-256 {it.sha256})")
+        elif action == "restore" and len(args) >= 2:
+            it = quarantine.find(args[1])
+            dest = args[2] if len(args) > 2 else None
+            console.print(f"[yellow]Ripristinare un file rilevato come malware lo rende di nuovo eseguibile.[/yellow] Motivo: {_e(it.reason)}")
+            if Confirm.ask(f"Ripristinare {_e(dest or it.original_path)}?", default=False):
+                console.print(f"[#51cf66]✔ Ripristinato:[/] {_e(quarantine.restore(it.id, dest))}")
+        elif action == "delete" and len(args) >= 2:
+            it = quarantine.find(args[1])
+            if Confirm.ask(f"Eliminare DEFINITIVAMENTE {_e(it.original_path)} (SHA-256 {it.sha256[:16]}…)?", default=False):
+                quarantine.delete(it.id)
+                console.print("[#51cf66]✔ Eliminato.[/]")
+        else:
+            console.print("Uso: /quarantine [list] · /quarantine add FILE · /quarantine restore ID [DESTINAZIONE] · /quarantine delete ID")
+    except quarantine.QuarantineError as exc:
+        console.print(f"[red]Errore:[/red] {_e(exc)}")
 
 
 def command(line: str) -> bool:
@@ -719,7 +912,7 @@ def command(line: str) -> bool:
         if not args:
             console.print("Uso: /details ID")
         else:
-            m = next((f for f in (a.findings if a else []) if f.id.lower() == args[0].lower()), None)
+            m = next((f for f in _known_findings(a) if f.id.lower() == args[0].lower()), None)
             show_details(m) if m else console.print("[yellow]Controllo non trovato. Esegui /scan e verifica l'ID.[/yellow]")
     elif cmd == "/fix":
         if not args:
@@ -767,6 +960,10 @@ def command(line: str) -> bool:
             ensure_tools(runner, wanted)
     elif cmd in ("/vuln", "/integrity"):
         _run_single_module(cmd, args)
+    elif cmd in ("/av", "/antivirus"):
+        do_av(args)
+    elif cmd == "/quarantine":
+        do_quarantine(args)
     elif cmd == "/lynis":
         if IS_WINDOWS:
             console.print("[yellow]Lynis esiste solo per Linux/Unix.[/yellow] Su Windows i controlli di hardening sono inclusi in /scan.")
@@ -812,6 +1009,7 @@ def scan(profile: str = typer.Option("desktop", help="Profilo: desktop o server"
          no_nmap: bool = typer.Option(False, "--no-nmap"), no_lynis: bool = typer.Option(False, "--no-lynis"),
          no_trivy: bool = typer.Option(False, "--no-trivy"), no_integrity: bool = typer.Option(False, "--no-integrity"),
          offline: bool = typer.Option(False, "--offline", help="Trivy: usa solo la cache locale del database"),
+         no_malware: bool = typer.Option(False, "--no-malware", help="Non eseguire l'antivirus"),
          install_missing: bool = typer.Option(False, "--install-missing", help="Installa gli strumenti mancanti prima della scansione (modifica il sistema; consenso esplicito)"),
          save: bool = typer.Option(False, "--save", help="Salva anche i rapporti JSON+HTML in lstk-reports/"),
          keep_history: bool = typer.Option(False, "--history", help="Salva la scansione nello storico (per history e diff)"),
@@ -831,7 +1029,8 @@ def scan(profile: str = typer.Option("desktop", help="Profilo: desktop o server"
         raise typer.BadParameter("--fail-on: none|low|medium|high|critical")
     opts = ScanOptions(profile=profile, mode=mode, targets=list(target or []), authorized=authorized,
                        use_nmap=not no_nmap, use_lynis=False if no_lynis else None,
-                       use_trivy=False if no_trivy else None, use_integrity=False if no_integrity else None, offline=offline)
+                       use_trivy=False if no_trivy else None, use_integrity=False if no_integrity else None, offline=offline,
+                       use_malware=False if no_malware else None)
     runner = Runner()
     installs: list = []
     if install_missing:
@@ -973,6 +1172,83 @@ def export(file: Path = typer.Argument(..., help="Rapporto JSON di LSTK (anche d
     except ReportError as exc:
         typer.echo(f"Errore: {exc}", err=True)
         raise typer.Exit(1)
+
+
+@app.command()
+def av(paths: Optional[List[str]] = typer.Argument(None, help="File o cartelle (default: percorsi a rischio; con --full tutto il disco)"),
+       full: bool = typer.Option(False, "--full", help="Scansione completa del disco"),
+       native: bool = typer.Option(False, "--native", help="Solo il motore interno (hash ed euristiche)"),
+       hashes: Optional[List[str]] = typer.Option(None, "--hashes", help="Elenco di hash SHA-256 di malware (ripetibile)"),
+       update: bool = typer.Option(False, "--update", help="Aggiorna prima le firme (freshclam / Defender)"),
+       quarantine_found: bool = typer.Option(False, "--quarantine", help="Mette in quarantena i file con malware (modifica il sistema)"),
+       fmt: str = typer.Option("table", "--format", "-f", help="table | json"),
+       fail_on_detect: bool = typer.Option(False, "--fail-on-detect", help="Exit code 4 se viene trovato malware")):
+    """Antivirus: cerca malware con Defender/ClamAV e il motore interno. Senza --quarantine non modifica nulla."""
+    if fmt not in ("table", "json"):
+        raise typer.BadParameter("--format: table | json")
+    runner = Runner()
+    log = lambda m: typer.echo(f"[lstk] {m}", err=True)  # noqa: E731
+    if update:
+        av_update(runner, confirm=False, log=log)
+    try:
+        out = malware.run_malware(runner, list(paths or []) or None, mode="full" if full else "quick", engines=_av_engines(native),
+                                  extra_hashes=list(hashes or []), progress=log)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc))
+    from .risk import score_finding
+    for f in out.findings:
+        score_finding(f)
+    moved = []
+    if quarantine_found:
+        for p in malware.quarantinable(out.detections):
+            try:
+                it = quarantine.add(p, reason="rilevato da lstk av", engine="lstk")
+                moved.append({"path": p, "id": it.id, "sha256": it.sha256})
+                log(f"quarantena {it.id}: {p}")
+            except quarantine.QuarantineError as exc:
+                log(f"quarantena NON riuscita per {p}: {exc}")
+    if fmt == "json":
+        typer.echo(json.dumps({"status": out.status, "detail": out.detail, "engines": [vars(e) for e in out.engines],
+                               "findings": [f.to_dict() for f in out.findings], "quarantined": moved}, ensure_ascii=False, indent=2))
+    else:
+        show_av(out)
+    if fail_on_detect and any(f.id.startswith("AV-DET") for f in out.findings):
+        raise typer.Exit(4)
+
+
+@app.command(name="quarantine")
+def quarantine_cmd(action: str = typer.Argument("list", help="list | add | restore | delete"),
+                   target: Optional[str] = typer.Argument(None, help="FILE (add) o ID (restore, delete)"),
+                   dest: Optional[str] = typer.Option(None, "--dest", help="restore: percorso diverso dall'originale"),
+                   yes: bool = typer.Option(False, "--yes", "-y", help="Non chiedere conferma")):
+    """Gestisce la quarantena: elenco, aggiunta, ripristino, eliminazione definitiva."""
+    if action not in ("list", "add", "restore", "delete"):
+        raise typer.BadParameter("list | add | restore | delete")
+    if action == "list":
+        show_quarantine()
+        return
+    if not target:
+        raise typer.BadParameter("serve un FILE (add) o un ID (restore, delete)")
+    try:
+        if action == "add":
+            if not yes and not typer.confirm(f"Spostare in quarantena {target}?", default=False):
+                raise typer.Exit(1)
+            it = quarantine.add(target, reason="aggiunto manualmente")
+            typer.echo(f"In quarantena: {it.id} (SHA-256 {it.sha256})")
+        elif action == "restore":
+            it = quarantine.find(target)
+            if not yes and not typer.confirm(f"Ripristinare {dest or it.original_path}? Era: {it.reason}", default=False):
+                raise typer.Exit(1)
+            typer.echo(f"Ripristinato: {quarantine.restore(it.id, dest)}")
+        else:
+            it = quarantine.find(target)
+            if not yes and not typer.confirm(f"Eliminare definitivamente {it.original_path}?", default=False):
+                raise typer.Exit(1)
+            quarantine.delete(it.id)
+            typer.echo("Eliminato.")
+    except quarantine.QuarantineError as exc:
+        typer.echo(f"Errore: {exc}", err=True)
+        raise typer.Exit(2)
 
 
 if __name__ == "__main__":

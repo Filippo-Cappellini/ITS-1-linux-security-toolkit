@@ -45,3 +45,14 @@ def _isolated_reports(tmp_path, monkeypatch):
     d.mkdir(mode=0o700)
     monkeypatch.setenv("LSTK_REPORT_DIR", str(d))
     monkeypatch.delenv("LSTK_HISTORY_DIR", raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_antivirus(tmp_path, monkeypatch):
+    """L'antivirus delle scansioni full nei test esamina una cartella vuota, mai la home o il disco della macchina."""
+    from lstk import malware
+    d = tmp_path / "av-target"
+    d.mkdir()
+    monkeypatch.setattr(malware, "default_targets", lambda mode="quick": [str(d)])
+    monkeypatch.setattr(malware, "defender_exe", lambda: None)
+    monkeypatch.setenv("LSTK_QUARANTINE_DIR", str(tmp_path / "quarantine"))

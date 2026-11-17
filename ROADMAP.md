@@ -19,7 +19,9 @@
 - [ ] Baseline CIS/SCAP e controlli di compliance
 - [x] Vulnerabilità dei pacchetti e segreti nei file (Trivy) e integrità dei file di pacchetto
 - [ ] Correlazione CVE per i servizi rilevati da Nmap (versioni in ascolto)
+- [x] Antivirus: Defender, ClamAV e motore interno (hash ed euristiche), quarantena ripristinabile
 - [ ] Rilevamento rootkit e file aggiunti (AIDE/rkhunter/chkrootkit) e controllo di integrità continuo
+- [ ] Antivirus: regole YARA, scansione in tempo reale (inotify / FileSystemWatcher), aggiornamento automatico degli elenchi di hash
 - [ ] Scanner aggiuntivo (es. Grype/Vuls) per confrontare le fonti di vulnerabilità
 - [x] Persistenza/storico degli audit e confronto tra scansioni (trend, nuovi/risolti)
 - [x] Esportazione SARIF/CSV/Markdown

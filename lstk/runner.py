@@ -30,7 +30,7 @@ def _windows_safe_path() -> str:
     pf86 = os.environ.get("ProgramFiles(x86)") or r"C:\Program Files (x86)"
     dirs = [os.path.join(root, "System32"), root, os.path.join(root, "System32", "Wbem"),
             os.path.join(root, "System32", "WindowsPowerShell", "v1.0"),
-            os.path.join(pf, "Nmap"), os.path.join(pf86, "Nmap"), os.path.join(pf, "Trivy")]
+            os.path.join(pf, "Nmap"), os.path.join(pf86, "Nmap"), os.path.join(pf, "Trivy"), os.path.join(pf, "ClamAV")]
     local = os.environ.get("LOCALAPPDATA")
     if local:
         # winget installa alcuni pacchetti per utente (es. Trivy) e crea qui i collegamenti: cartelle dell'utente, ultime in ordine.

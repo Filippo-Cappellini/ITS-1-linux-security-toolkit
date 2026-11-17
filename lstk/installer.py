@@ -1,4 +1,4 @@
-"""Installazione guidata degli strumenti mancanti (nmap, lynis, trivy, iproute2).
+"""Installazione guidata degli strumenti mancanti (nmap, lynis, trivy, clamav, iproute2).
 
 Questo modulo è l'UNICO che modifica il sistema, e solo su richiesta esplicita dell'utente:
 - mai in automatico: la CLI mostra i comandi esatti e chiede conferma (o richiede --yes / --install-missing);
@@ -60,6 +60,8 @@ LINUX_TOOLS = {
     "lynis": Tool("lynis", "lynis", "audit di hardening", {m: "lynis" for m in MANAGERS}),
     "iproute2": Tool("iproute2", "ss", "comandi ip/ss (rete locale)",
                      {"apt-get": "iproute2", "dnf": "iproute", "yum": "iproute", "zypper": "iproute2", "pacman": "iproute2"}),
+    "clamav": Tool("clamav", "clamscan", "antivirus (motore e firme ClamAV, aggiornate con freshclam)",
+                   {"apt-get": "clamav", "dnf": "clamav clamav-update", "yum": "clamav clamav-update", "zypper": "clamav", "pacman": "clamav"}),
     "trivy": Tool("trivy", "trivy", f"vulnerabilità e segreti (release ufficiale v{TRIVY_VERSION}, hash SHA-256 fissato)", download=True),
 }
 # winget: identificativi dei pacchetti nel repository ufficiale "winget" (manifest con SHA-256 dell'installer).
@@ -134,7 +136,7 @@ def plan_install(runner: Runner, names) -> list[Step]:
         if mgr is None:
             raise InstallError("nessun gestore pacchetti supportato (apt-get, dnf, yum, zypper, pacman): installare " +
                                ", ".join(pkg_tools) + " manualmente.")
-        pkgs = sorted({TOOLS[n].packages[mgr] for n in pkg_tools})
+        pkgs = sorted({p for n in pkg_tools for p in TOOLS[n].packages[mgr].split()})
         exe = _abs(runner, mgr)
         label = "pacchetti: " + ", ".join(pkgs)
         if mgr == "apt-get":
@@ -283,5 +285,5 @@ def _planned(steps: list[Step]) -> set[str]:
     names: set[str] = set()
     for s in steps:
         if s.argv:
-            names |= {n for n, t in TOOLS.items() if not t.download and any(p in s.argv for p in t.packages.values())}
+            names |= {n for n, t in TOOLS.items() if not t.download and any(set(p.split()) <= set(s.argv) for p in t.packages.values())}
     return names

@@ -1,4 +1,4 @@
-"""Orchestratore dell'assessment (Linux e Windows): controlli nativi + integrità + Nmap + Trivy + Lynis + risk assessment.
+"""Orchestratore dell'assessment (Linux e Windows): controlli nativi + integrità + Nmap + Trivy + antivirus + Lynis + risk assessment.
 
 È il motore del comando /scan. Non modifica mai il sistema.
 """
@@ -16,6 +16,7 @@ from .audit import collect
 from .integrity import run_integrity
 from .osinfo import IS_WINDOWS, current_user, system_name
 from .lynis import run_lynis
+from .malware import run_malware
 from .models import Finding
 from .nmapscan import Target, TargetError, local_addresses, run_nmap, validate_target
 from .risk import RiskSummary, assess
@@ -28,13 +29,13 @@ PROFILES = ("desktop", "server")
 MODE_TABLE = {
     "quick": "controlli base + Nmap top-1000 porte TCP",
     "deep": "controlli estesi + integrità file + Nmap tutte le porte TCP",
-    "full": "controlli estesi + integrità file + Nmap (tutte le porte, script default, UDP top-50 se root) + Trivy (vulnerabilità e segreti) + Lynis",
+    "full": "controlli estesi + integrità file + Nmap (tutte le porte, script default, UDP top-50 se root) + Trivy (vulnerabilità e segreti) + antivirus + Lynis",
 }
 if IS_WINDOWS:
     MODE_TABLE = {
         "quick": "controlli Windows base + Nmap top-1000 porte TCP",
         "deep": "controlli Windows estesi (privilege escalation, avvio automatico) + firme digitali dei servizi + Nmap tutte le porte TCP",
-        "full": "controlli estesi + firme digitali + Nmap (tutte le porte, script default) + Trivy (librerie e segreti nel profilo utente)",
+        "full": "controlli estesi + firme digitali + Nmap (tutte le porte, script default) + Trivy (librerie e segreti nel profilo utente) + antivirus",
     }
 
 
@@ -53,12 +54,16 @@ class ScanOptions:
     use_trivy: bool | None = None                  # None = in base alla modalità (solo full)
     use_integrity: bool | None = None              # None = in base alla modalità (deep e full)
     offline: bool = False                          # Trivy: usa solo la cache locale del database
+    use_malware: bool | None = None                # None = in base alla modalità (solo full): antivirus sui percorsi a rischio
 
     def lynis_enabled(self) -> bool:
         return self.mode == "full" if self.use_lynis is None else self.use_lynis
 
     def trivy_enabled(self) -> bool:
         return self.mode == "full" if self.use_trivy is None else self.use_trivy
+
+    def malware_enabled(self) -> bool:
+        return self.mode == "full" if self.use_malware is None else self.use_malware
 
     def integrity_enabled(self) -> bool:
         return self.mode in ("deep", "full") if self.use_integrity is None else self.use_integrity
@@ -205,6 +210,21 @@ def run_assessment(opts: ScanOptions, runner: Runner | None = None, progress=Non
     else:
         modules.append(ModuleResult("trivy", "skipped", "non previsto dalla modalità o disabilitato"))
         partial.append("scansione vulnerabilità (Trivy) non eseguita")
+
+    if opts.malware_enabled():
+        say("Antivirus: ricerca di malware nei percorsi a rischio (può richiedere diversi minuti)…")
+        try:
+            out = run_malware(runner, mode="quick")
+            findings += out.findings
+            modules.append(ModuleResult("antivirus", out.status, out.detail))
+            if out.status != "ok":
+                partial.append(f"Antivirus: {out.detail}")
+        except Exception as exc:
+            modules.append(ModuleResult("antivirus", "failed", f"{type(exc).__name__}: {exc}"))
+            partial.append("antivirus fallito")
+    else:
+        modules.append(ModuleResult("antivirus", "skipped", "non previsto dalla modalità o disabilitato"))
+        partial.append("ricerca di malware non eseguita")
 
     lynis_index = None
     if IS_WINDOWS:
