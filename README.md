@@ -1,4 +1,4 @@
-# LSTK · Security Toolkit e antivirus per Linux e Windows (v0.8.0)
+# LSTK · Security Toolkit e antivirus per Linux e Windows (v0.9.0)
 
 **Assessment di sicurezza automatico, in sola lettura, con risk assessment `rischio = probabilità × impatto`, e antivirus con quarantena.**
 Gira su **Linux** e, da questa versione, anche su **Windows 10/11**: stesso comando, stessa console, stesso rapporto.
@@ -34,6 +34,16 @@ cd ITS-1-linux-security-toolkit
 
 Nel prompt `lstk ›` scrivi `/scan` e conferma. Senza console interattiva: `./run.sh scan --format table` (Linux) o `.\run.bat scan --format table` (Windows).
 
+## Novità della 0.9.0: grafica "classificata" e `/update`
+
+- **Nuova grafica**: tema oro su nero in stile dossier segreto, con la piramide e l'occhio. All'avvio la piramide si costruisce, l'occhio si apre, si guarda intorno e il titolo si "decifra"; all'uscita l'occhio si chiude. Durante le scansioni lo spinner è un occhio che si muove. L'animazione dura circa 2 secondi, si salta con Ctrl+C e si disattiva con `LSTK_NO_ANIM=1` (parte solo su un terminale vero, mai in pipe o in CI).
+- **`/update`** (e `lstk update [--yes] [--no-python]`): aggiorna in un colpo solo ciò che LSTK usa ed è già installato. Mostra i comandi esatti e chiede conferma.
+  - Linux: `nmap`, `lynis`, `clamav`, `iproute2` dal gestore pacchetti (`apt-get install --only-upgrade`, `dnf upgrade`, `yum update`, `zypper update`; con `pacman` l'intero sistema, perché gli aggiornamenti parziali non sono supportati). Trivy viene reinstallato solo se più vecchio della versione fissata, sempre con verifica SHA-256.
+  - Windows: `winget upgrade` di Nmap e Trivy.
+  - Ovunque: database delle vulnerabilità di Trivy, firme antivirus (freshclam / Defender), librerie Python `typer` e `rich` (solo dentro il virtualenv).
+  - Non installa nulla di nuovo (per quello resta `/install`); un passo non riuscito non blocca gli altri.
+- **Meno comandi**: tolti `/status` (le stesse informazioni sono nel banner), `/checks` (l'elenco dei controlli è in questo README), `/open` (usa `/report html --open`), `/search` (ora è `/findings TESTO`), `/av update` (incluso in `/update`) e gli alias `/antivirus`, `/?`.
+
 ## Novità della 0.8.0: antivirus
 
 LSTK ora cerca anche malware, con tutti i motori disponibili insieme:
@@ -63,7 +73,7 @@ Per provarlo senza rischi usa il [file di test EICAR](https://www.eicar.org/down
 - **Storico e confronto**: ogni scansione dalla console viene salvata; `/history` mostra il trend della postura, `/diff` elenca rischi nuovi, risolti, peggiorati e migliorati.
 - **Correzioni suggerite**: `/fix ID` mostra i comandi per risolvere il problema (Linux o Windows). LSTK **non li esegue**.
 - **Export**: oltre a JSON e HTML, **SARIF 2.1.0** (GitHub code scanning, Azure DevOps), **CSV** (Excel, protetto dalla formula injection) e **Markdown**. `lstk export` rigenera un rapporto dallo storico senza ripetere la scansione.
-- `/search`, `/open` (apre l'ultimo rapporto HTML), ciclo di vita di Windows (fine supporto per versione ed edizione).
+- Ciclo di vita di Windows (fine supporto per versione ed edizione).
 
 ## Esempio di output
 
@@ -97,12 +107,12 @@ P = probabilità (1–5), I = impatto (1–5). Livelli: critical ≥ 20, high �
 ## Comandi della console
 
 ```text
-Scansione   /scan [quick|deep|full] [--target T] [--no-nmap|--no-trivy|--no-malware|--no-integrity|--no-lynis] [--offline]
-            /vuln · /integrity · /lynis (solo Linux) · /profile desktop|server
-Antivirus   /av [quick|full|PERCORSO…] [--native] [--hashes FILE] · /av update · /quarantine [add|restore|delete]
-Risultati   /risk · /findings [issues|all|critical|high|medium|low|unverified] · /details ID · /fix ID · /search TESTO
-Rapporti    /report [json|html|sarif|csv|md|all] [--open] · /open · /history · /diff [A] [B] · /verify FILE
-Strumenti   /doctor · /install [nmap|trivy|lynis|clamav|iproute2|all] · /checks · /status · /help · /exit
+Ricognizione  /scan [quick|deep|full] [--target T] [--no-nmap|--no-trivy|--no-malware|--no-integrity|--no-lynis] [--offline]
+              /vuln · /integrity · /lynis (solo Linux) · /profile desktop|server
+Antivirus     /av [quick|full|PERCORSO…] [--native] [--hashes FILE] · /quarantine [add|restore|delete]
+Dossier       /risk · /findings [issues|all|critical|high|medium|low|unverified|TESTO] · /details ID · /fix ID
+Archivio      /report [json|html|sarif|csv|md|all] [--open] · /history · /diff [A] [B] · /verify FILE
+Arsenale      /doctor · /install [nmap|trivy|lynis|clamav|iproute2|all] · /update · /clear · /help · /exit
 ```
 
 Modalità non interattiva (risultato su stdout, avanzamento su stderr):
@@ -112,7 +122,7 @@ lstk scan --profile server --mode full --format table           # tabella di ris
 lstk scan --mode full --save --history --fail-on high > out.json # JSON + rapporti + storico; exit 3 se rischio >= high
 lstk scan --format sarif > lstk.sarif                            # per GitHub code scanning
 lstk history ; lstk diff ; lstk export lstk-reports/history/scan-XXXX.json --format html
-lstk install trivy --yes ; lstk doctor ; lstk verify lstk-reports/audit-XXXX.json
+lstk install trivy --yes ; lstk update --yes ; lstk doctor ; lstk verify lstk-reports/audit-XXXX.json
 ```
 Exit code: `0` ok · `1` errore · `2` argomenti/autorizzazione non validi · `3` soglia `--fail-on` superata · `4` malware trovato (`lstk av --fail-on-detect`).
 

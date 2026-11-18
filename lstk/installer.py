@@ -1,6 +1,6 @@
 """Installazione guidata degli strumenti mancanti (nmap, lynis, trivy, clamav, iproute2).
 
-Questo modulo è l'UNICO che modifica il sistema, e solo su richiesta esplicita dell'utente:
+Questo modulo è l'UNICO che modifica il sistema (installazione e aggiornamento), e solo su richiesta esplicita dell'utente:
 - mai in automatico: la CLI mostra i comandi esatti e chiede conferma (o richiede --yes / --install-missing);
 - nmap, lynis, iproute2: dai repository ufficiali della distribuzione (apt / dnf / yum / zypper / pacman), firmati dal gestore pacchetti;
 - trivy: release ufficiale GitHub a versione FISSATA, con SHA-256 FISSATO nel codice (non scaricato dallo stesso sito del file):
@@ -14,6 +14,7 @@ from __future__ import annotations
 import hashlib
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -287,3 +288,115 @@ def _planned(steps: list[Step]) -> set[str]:
         if s.argv:
             names |= {n for n, t in TOOLS.items() if not t.download and any(set(p.split()) <= set(s.argv) for p in t.packages.values())}
     return names
+
+
+# --------------------------------------------------------------------------- aggiornamento degli strumenti installati
+PY_DEPS = ("typer>=0.12", "rich>=13.7")
+
+
+@dataclass
+class UpdateStep:
+    tool: str
+    description: str
+    argv: list | None = None
+    privileged: bool = True     # sudo su Linux se non si è root
+    optional: bool = False      # un errore non è un fallimento (es. "nessun aggiornamento disponibile" di winget)
+    download: bool = False      # reinstallazione verificata di Trivy
+
+
+def _vt(v: str) -> tuple:
+    return tuple(int(x) for x in re.findall(r"\d+", v)[:3])
+
+
+def trivy_version(runner: Runner) -> str | None:
+    exe = runner.which("trivy")
+    if not exe:
+        return None
+    r = runner.run([exe, "--version"], timeout=20)
+    m = re.search(r"Version:\s*v?(\d+(?:\.\d+)+)", r.out or "")
+    return m.group(1) if m else None
+
+
+def in_virtualenv() -> bool:
+    return sys.prefix != getattr(sys, "base_prefix", sys.prefix)
+
+
+def plan_update(runner: Runner, *, signatures=None, python: bool | None = None) -> list[UpdateStep]:
+    """Passi per aggiornare SOLO gli strumenti già installati che LSTK usa, le loro basi dati e le dipendenze Python.
+
+    Non installa nulla di nuovo (per quello c'è /install). `signatures`: comandi di aggiornamento firme antivirus
+    (da malware.update_commands); `python`: aggiorna typer/rich nel virtualenv (default: solo se si è in un virtualenv).
+    """
+    steps: list[UpdateStep] = []
+    present = [n for n, t in TOOLS.items() if runner.which(t.binary)]
+    if IS_WINDOWS:
+        exe = runner.which("winget")
+        for n in present:
+            pkg = WINDOWS_TOOLS[n].packages["winget"]
+            if exe:
+                steps.append(UpdateStep(n, f"aggiorna {n} con winget (pacchetto {pkg}, se c'è una versione nuova)",
+                                        [exe, "upgrade", "--id", pkg, "--exact", "--source", "winget", "--accept-source-agreements",
+                                         "--accept-package-agreements", "--disable-interactivity"], optional=True))
+    else:
+        pkg_tools = [n for n in present if not TOOLS[n].download]
+        mgr = detect_manager(runner)
+        if pkg_tools and mgr:
+            pkgs = sorted({p for n in pkg_tools for p in TOOLS[n].packages[mgr].split()})
+            exe, label = _abs(runner, mgr), ", ".join(pkgs)
+            if mgr == "apt-get":
+                steps.append(UpdateStep("pacchetti", "aggiorna l'elenco dei pacchetti", [exe, "update"], optional=True))
+                steps.append(UpdateStep("pacchetti", f"aggiorna {label} (solo se già installati)", [exe, "install", "--only-upgrade", "-y", *pkgs]))
+            elif mgr == "dnf":
+                steps.append(UpdateStep("pacchetti", f"aggiorna {label}", [exe, "upgrade", "-y", *pkgs]))
+            elif mgr == "yum":
+                steps.append(UpdateStep("pacchetti", f"aggiorna {label}", [exe, "update", "-y", *pkgs]))
+            elif mgr == "zypper":
+                steps.append(UpdateStep("pacchetti", f"aggiorna {label}", [exe, "--non-interactive", "update", *pkgs]))
+            else:   # pacman non supporta aggiornamenti parziali: -Syu aggiorna l'intero sistema
+                steps.append(UpdateStep("pacchetti", "aggiorna l'intero sistema (pacman non ammette aggiornamenti parziali)",
+                                        [exe, "-Syu", "--noconfirm"]))
+        cur = trivy_version(runner) if "trivy" in present else None
+        if cur and _vt(cur) < _vt(TRIVY_VERSION):
+            steps.append(UpdateStep("trivy", f"Trivy {cur} → v{TRIVY_VERSION}: scarica da github.com, verifica lo SHA-256 fissato e installa in "
+                                             f"{DEFAULT_DEST}/trivy", download=True))
+    trivy = runner.which("trivy")
+    if trivy:
+        argv = [trivy, "image", "--download-db-only", "--no-progress"]
+        cache = os.environ.get("LSTK_TRIVY_CACHE_DIR")
+        if cache:
+            argv += ["--cache-dir", cache]
+        steps.append(UpdateStep("trivy-db", "scarica il database aggiornato delle vulnerabilità di Trivy (per l'utente corrente)",
+                                argv, privileged=False))
+    for c in signatures or []:
+        steps.append(UpdateStep("firme antivirus", f"aggiorna le firme ({os.path.basename(c[0])})", list(c), privileged=not IS_WINDOWS))
+    if python if python is not None else in_virtualenv():
+        steps.append(UpdateStep("python", "aggiorna le librerie Python di LSTK (typer, rich) nel virtualenv",
+                                [sys.executable, "-m", "pip", "install", "--upgrade", "--disable-pip-version-check", "--quiet", *PY_DEPS],
+                                privileged=False))
+    return steps
+
+
+def run_update(runner: Runner, steps: list[UpdateStep], *, root: bool, log=print, to_stderr: bool = False,
+               exec_fn=_exec, fetch=fetch_file, dest_dir: str = DEFAULT_DEST) -> list[InstallResult]:
+    """Esegue tutti i passi (un errore non ferma i successivi: ogni strumento si aggiorna in modo indipendente)."""
+    results: list[InstallResult] = []
+    stamp = lambda: time.strftime("%Y-%m-%dT%H:%M:%S%z")  # noqa: E731
+    for st in steps:
+        try:
+            if st.download:
+                log(f"→ {st.description}")
+                target = install_trivy(runner, root=root, dest_dir=dest_dir, fetch=fetch, exec_fn=exec_fn, to_stderr=to_stderr)
+                results.append(InstallResult("trivy", True, f"aggiornato a v{TRIVY_VERSION} in {target}", "download verificato", stamp()))
+                continue
+            argv = _privileged(st.argv, root, runner) if st.privileged else st.argv
+            log(f"→ {' '.join(argv)}")
+            rc = exec_fn(argv, to_stderr)
+            if rc == 0:
+                results.append(InstallResult(st.tool, True, "aggiornato", "update", stamp()))
+            elif st.optional:
+                results.append(InstallResult(st.tool, True, f"nessun aggiornamento applicato (codice {rc})", "update", stamp()))
+            else:
+                results.append(InstallResult(st.tool, False, f"comando terminato con codice {rc}", "update", stamp()))
+        except InstallError as exc:
+            results.append(InstallResult(st.tool, False, str(exc), "update", stamp()))
+    return results

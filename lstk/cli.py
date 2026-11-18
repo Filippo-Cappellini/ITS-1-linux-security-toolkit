@@ -21,7 +21,7 @@ from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
 
-from . import __version__, history, installer, malware, quarantine
+from . import __version__, history, installer, malware, quarantine, theme
 from .fixes import suggestions
 from .nmapscan import TargetError
 from .osinfo import IS_WINDOWS, admin_word, system_name
@@ -35,15 +35,7 @@ console = Console(highlight=False)
 STATE: dict = {"profile": "desktop", "assessment": None, "last_scan": None, "installs": [], "last_html": None, "av_findings": []}
 
 OS_LABEL = "Windows" if IS_WINDOWS else "Linux"
-LOGO_LINES = [
-    "██╗     ███████╗████████╗██╗  ██╗",
-    "██║     ██╔════╝╚══██╔══╝██║ ██╔╝",
-    "██║     ███████╗   ██║   █████╔╝ ",
-    "██║     ╚════██║   ██║   ██╔═██╗ ",
-    "███████╗███████║   ██║   ██║  ██╗",
-    "╚══════╝╚══════╝   ╚═╝   ╚═╝  ╚═╝",
-]
-GRADIENT = ["#4dabf7", "#4c9cf5", "#5c7cfa", "#7048e8", "#9c36b5", "#c2255c"]
+LOGO_LINES, GRADIENT = theme.LOGO_LINES, theme.GRADIENT
 
 LEVEL_STYLE = {"critical": "bold white on #c92a2a", "high": "bold white on #e8590c", "medium": "bold black on #fab005",
                "low": "bold white on #1c7ed6", "none": "bold white on #2f9e44", "unverified": "bold white on #7048e8", "info": "dim"}
@@ -58,7 +50,7 @@ BIG = {"A": [" ▄▀▀▄ ", " █▄▄█ ", " █  █ "], "B": [" █▀�
 STYLE = LEVEL_STYLE   # nome storico
 
 HELP_GROUPS = [
-    ("Scansione", [
+    ("Operazioni di ricognizione", [
         ("/scan [quick|deep|full]", "Risk assessment completo del sistema (default: full)"),
         ("   --target IP|CIDR|host", "Scansiona anche bersagli non locali (serve autorizzazione)"),
         ("   --no-nmap --no-trivy --no-malware --no-integrity" + ("" if IS_WINDOWS else " --no-lynis"), "Esclude un modulo (valutazione parziale)"),
@@ -66,27 +58,24 @@ HELP_GROUPS = [
         ("/vuln · /integrity" + ("" if IS_WINDOWS else " · /lynis"), "Esegue un singolo modulo"),
         ("/profile desktop|server", "Mostra o cambia profilo"),
     ]),
-    ("Antivirus", [
+    ("Controspionaggio (antivirus)", [
         ("/av [quick|full|PERCORSO…]", "Cerca malware (quick: percorsi a rischio, full: tutto il disco)"),
-        ("/av update", "Aggiorna le firme (freshclam" + (" / Defender)" if IS_WINDOWS else ")")),
         ("/quarantine [add FILE|restore ID|delete ID]", "Quarantena: elenco, sposta, ripristina, elimina"),
     ]),
-    ("Risultati", [
+    ("Dossier", [
         ("/risk", "Cruscotto: voto, postura, matrice 5×5, rischi principali"),
-        ("/findings [filtro]", "issues (default) · all · critical|high|medium|low · unverified"),
+        ("/findings [filtro|TESTO]", "issues (default) · all · critical|high|medium|low · unverified · oppure un testo da cercare"),
         ("/details ID · /fix ID", "Dettaglio di un controllo · comandi di correzione suggeriti"),
-        ("/search TESTO", "Cerca tra i controlli (titolo, evidenza, ID)"),
     ]),
-    ("Rapporti e storico", [
-        ("/report [json|html|sarif|csv|md|all]", "Esporta (hash SHA-256, HMAC opzionale); --open apre l'HTML"),
-        ("/open", "Apre nel browser l'ultimo rapporto HTML"),
-        ("/history", "Scansioni precedenti con trend della postura"),
-        ("/diff [A] [B]", "Confronta due scansioni (default: le ultime due)"),
+    ("Archivio", [
+        ("/report [json|html|sarif|csv|md|all] [--open]", "Esporta (hash SHA-256, HMAC opzionale); --open apre l'HTML"),
+        ("/history · /diff [A] [B]", "Scansioni precedenti con trend · confronto (default: le ultime due)"),
         ("/verify FILE", "Verifica l'integrità di un rapporto"),
     ]),
-    ("Strumenti e console", [
-        ("/doctor · /install [nome|all]", "Strumenti presenti · installazione guidata"),
-        ("/checks · /status", "Controlli implementati · stato del programma"),
+    ("Arsenale", [
+        ("/doctor", "Strumenti presenti, percorsi e privilegi"),
+        ("/install [nome|all]", "Installa gli strumenti mancanti"),
+        ("/update", "Aggiorna strumenti installati, database Trivy, firme antivirus e librerie Python"),
         ("/clear · /help · /exit", "Pulisce · guida · esce"),
     ]),
 ]
@@ -102,59 +91,57 @@ def chip(level: str, text: str | None = None) -> str:
 
 
 def logo() -> Text:
-    t = Text()
-    for line, col in zip(LOGO_LINES, GRADIENT):
-        t.append(line + "\n", style=f"bold {col}")
-    t.append("SECURITY TOOLKIT", style="bold white")
-    t.append(f"  v{__version__}\n", style="dim")
-    t.append("Linux & Windows · Risk assessment · Antivirus · Nmap · Trivy · Lynis", style="#9aa5b8")
-    return t
+    return theme.logo(1.0, __version__)
 
 
 def tool_chips(runner: Runner) -> str:
-    return "  ".join(f"[#51cf66]✔[/] {n}" if runner.which(t.binary) else f"[#ff6b6b]✘[/] [dim]{n}[/]" for n, t in installer.TOOLS.items())
+    return "  ".join(f"[{theme.OK}]◉[/] {n}" if runner.which(t.binary) else f"[#ff6b6b]○[/] [dim]{n}[/]" for n, t in installer.TOOLS.items())
 
 
-def banner():
+def banner(animate: bool = False):
     runner = Runner()
+    if animate:
+        theme.intro(console, __version__)
     info = Table.grid(padding=(0, 2))
-    info.add_column(style="#9aa5b8", justify="right")
+    info.add_column(style=theme.MUTED, justify="right")
     info.add_column()
     info.add_row("Sistema", _e(f"{OS_LABEL} · {platform.platform(terse=True)}"))
-    info.add_row("Host", _e(platform.node()))
-    info.add_row("Privilegi", f"[#51cf66]{admin_word()}[/]" if is_root() else
-                 f"[#fcc419]utente[/] [dim](copertura ridotta: {'Esegui come amministratore' if IS_WINDOWS else 'usa sudo'})[/]")
+    info.add_row("Nodo", _e(platform.node()))
+    info.add_row("Nulla osta", f"[bold {theme.OK}]LIVELLO OMEGA[/] [dim]({admin_word()})[/]" if is_root() else
+                 f"[#fcc419]LIVELLO 1[/] [dim](utente: copertura ridotta, {'Esegui come amministratore' if IS_WINDOWS else 'usa sudo'})[/]")
     info.add_row("Profilo", f"[bold]{STATE['profile']}[/]")
-    info.add_row("Strumenti", tool_chips(runner))
-    if console.width >= 100:
-        body = Table.grid(padding=(0, 6))
-        body.add_column(no_wrap=True)
-        body.add_column(vertical="middle")
-        body.add_row(logo(), info)
+    info.add_row("Arsenale", tool_chips(runner))
+    if console.width >= 110:
+        body = Table.grid(padding=(0, 4))
+        body.add_column(no_wrap=True, vertical="middle")
+        body.add_column(no_wrap=True, vertical="middle")
+        body.add_row(theme.pyramid("open"), logo())
+        body = Group(body, Rule(style=theme.GOLD_DIM), info)
     else:
-        body = Group(logo(), Text(""), info)
-    console.print(Panel(body, border_style="#5c7cfa", box=box.ROUNDED, padding=(1, 2)))
-    console.print("  [bold #4dabf7]/scan[/] avvia l'assessment · [bold #4dabf7]/help[/] tutti i comandi · "
-                  "[dim]nulla parte da solo e nulla viene modificato sul sistema[/]\n")
+        body = Group(theme.pyramid("open"), Text(""), logo(), Rule(style=theme.GOLD_DIM), info)
+    console.print(Panel(body, border_style=theme.GOLD, box=box.DOUBLE, padding=(1, 2),
+                        title=f"[{theme.GOLD}]▲ ACCESSO RISERVATO ▲[/]", subtitle="[dim]classificazione: riservatissimo[/]"))
+    console.print(f"  [bold {theme.ACCENT}]/scan[/] avvia la ricognizione · [bold {theme.ACCENT}]/help[/] i protocolli · "
+                  f"[bold {theme.ACCENT}]/update[/] aggiorna l'arsenale · [dim]nulla parte da solo[/]\n")
 
 
 def print_help():
     for title, rows in HELP_GROUPS:
         t = Table(box=box.SIMPLE_HEAD, show_header=False, expand=True, padding=(0, 1))
-        t.add_column(style="bold #4dabf7", no_wrap=True, ratio=2)
+        t.add_column(style=f"bold {theme.ACCENT}", no_wrap=True, ratio=2)
         t.add_column(ratio=3)
         for cmd, desc in rows:
             t.add_row(_e(cmd), _e(desc))
-        console.print(Panel(t, title=f"[bold]{title}[/]", title_align="left", border_style="#3b5bdb", box=box.ROUNDED))
-    console.print("[dim]Esempi: /scan · /scan quick · /scan full --target 192.168.1.10 · /findings high · /fix FW-001 · /report all · /diff[/dim]")
+        console.print(Panel(t, title=f"[bold {theme.GOLD}]▲ {title.upper()}[/]", title_align="left", border_style=theme.BORDER, box=box.ROUNDED))
+    console.print("[dim]Esempi: /scan · /scan quick · /scan full --target 192.168.1.10 · /findings high · /findings ssh · /fix FW-001 · /report all --open[/dim]")
 
 
 def show_findings(findings, title="Risultati"):
     if not findings:
         console.print("[yellow]Nessun risultato per questo filtro. Esegui /scan oppure cambia filtro.[/yellow]")
         return
-    table = Table(title=f"[bold]{_e(title)}[/] [dim]— {len(findings)}[/]", box=box.ROUNDED, expand=True, border_style="#3b5bdb",
-                  header_style="bold #9aa5b8")
+    table = Table(title=f"[bold]{_e(title)}[/] [dim]— {len(findings)}[/]", box=box.ROUNDED, expand=True, border_style=theme.BORDER,
+                  header_style=f"bold {theme.MUTED}")
     for col in ("ID", "Rischio", "P", "I", "P×I", "Esito", "Fonte", "Controllo"):
         table.add_column(col, no_wrap=(col in ("ID", "Rischio", "P", "I", "P×I", "Esito")),
                          justify="right" if col in ("P", "I", "P×I") else "left", overflow="fold")
@@ -329,7 +316,7 @@ def ensure_tools(runner: Runner, wanted: list[str], context: str = "") -> bool:
 
 
 def doctor(runner: Runner) -> None:
-    table = Table(title="Strumenti", box=box.ROUNDED, border_style="#3b5bdb", header_style="bold #9aa5b8")
+    table = Table(title="Strumenti", box=box.ROUNDED, border_style=theme.BORDER, header_style=f"bold {theme.MUTED}")
     for col in ("Strumento", "Stato", "Percorso", "A cosa serve"):
         table.add_column(col)
     for name, t in installer.TOOLS.items():
@@ -348,6 +335,52 @@ def doctor(runner: Runner) -> None:
         npcap = os.path.isdir(os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32", "Npcap"))
         console.print(f"[dim]Npcap (scansione SYN/UDP di Nmap): {'presente' if npcap else 'assente: Nmap usa la scansione TCP connect'}[/dim]")
     console.print(f"[dim]Privilegi: {admin_word() if is_root() else 'utente'} · gestore pacchetti: {installer.detect_manager(runner) or 'nessuno supportato'}[/dim]")
+
+
+def plan_update(runner: Runner) -> list:
+    return installer.plan_update(runner, signatures=malware.update_commands(runner))
+
+
+def show_update_results(results) -> None:
+    for r in results:
+        console.print(f"  {'[' + theme.OK + ']◉[/]' if r.ok else '[#ff6b6b]✘[/]'} {_e(r.tool)}: {_e(r.detail)}")
+        STATE["installs"].append(r.to_dict())
+
+
+def do_update(runner: Runner) -> None:
+    """Aggiorna ciò che è già installato: strumenti di scansione, database di Trivy, firme antivirus, librerie Python."""
+    try:
+        steps = plan_update(runner)
+    except installer.InstallError as exc:
+        console.print(f"[red]Errore:[/red] {_e(exc)}")
+        return
+    if not steps:
+        console.print("[yellow]Niente da aggiornare: nessuno strumento installato.[/yellow] Usa /install per installarli.")
+        return
+    prefix = ("sudo --",) if not is_root() and not IS_WINDOWS else ()
+    lines = []
+    for st in steps:
+        lines.append(f"  [{theme.GOLD}]◉[/] {_e(st.description)}")
+        if st.argv:
+            lines.append(f"    [dim]{_e(' '.join((prefix if st.privileged else ()) + tuple(st.argv)))}[/dim]")
+    missing = installer.missing_tools(runner)
+    if missing:
+        lines.append(f"\n[dim]Non installati (quindi non aggiornati): {_e(', '.join(missing))} · /install per aggiungerli[/dim]")
+    lines.append("\n[yellow]Questo MODIFICA il sistema[/yellow] (aggiorna software" + (": Windows potrebbe chiedere conferma con UAC)." if IS_WINDOWS else
+                 ("" if is_root() else "; verrà usato sudo dove serve") + ")."))
+    console.print(Panel("\n".join(lines), title="▲ Aggiornamento dell'arsenale", border_style=theme.GOLD, box=box.ROUNDED))
+    if not Confirm.ask("Procedere con l'aggiornamento?", default=False):
+        console.print("Aggiornamento annullato.")
+        return
+    try:
+        results = installer.run_update(runner, steps, root=is_root(), log=lambda m: console.print(f"[dim]{_e(m)}[/dim]"))
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Aggiornamento interrotto.[/yellow]")
+        return
+    show_update_results(results)
+    bad = [r for r in results if not r.ok]
+    console.print(f"[bold {theme.OK}]✔ Arsenale aggiornato.[/]" if not bad else
+                  f"[#fcc419]{len(bad)} passo/i non riuscito/i: gli altri strumenti sono stati comunque aggiornati.[/]")
 
 
 # --------------------------------------------------------------------------- /scan
@@ -384,26 +417,26 @@ def describe_plan(opts: ScanOptions, runner: Runner, targets) -> str:
              f"[dim]{_e(MODE_TABLE[opts.mode])}[/dim]",
              f"Privilegi: {admin_word() if is_root() else '[#fcc419]utente non privilegiato (copertura ridotta, valutazione parziale)[/]'}", "",
              "[bold]Verranno eseguiti[/bold] (solo lettura, nessuna modifica al sistema):",
-             f"  [#4dabf7]●[/] controlli nativi {OS_LABEL} {'estesi' if opts.mode != 'quick' else 'base'}"
+             f"  [{theme.GOLD}]◉[/] controlli nativi {OS_LABEL} {'estesi' if opts.mode != 'quick' else 'base'}"
              + (" [dim](registro e cmdlet PowerShell Get-*)[/dim]" if IS_WINDOWS else "")]
     if opts.integrity_enabled():
         if IS_WINDOWS:
-            lines.append("  [#4dabf7]●[/] firme digitali (Authenticode) degli eseguibili dei servizi")
+            lines.append(f"  [{theme.GOLD}]◉[/] firme digitali (Authenticode) degli eseguibili dei servizi")
         else:
             ok = runner.which("dpkg") or runner.which("rpm")
-            lines.append("  [#4dabf7]●[/] integrità dei file installati (dpkg --verify / rpm -Va)" + ("" if ok else " [#fcc419](dpkg/rpm assenti: verrà saltato)[/]"))
+            lines.append(f"  [{theme.GOLD}]◉[/] integrità dei file installati (dpkg --verify / rpm -Va)" + ("" if ok else " [#fcc419](dpkg/rpm assenti: verrà saltato)[/]"))
     if opts.use_nmap:
-        lines.append(f"  [#4dabf7]●[/] Nmap su: {_e(', '.join(t.raw for t in targets))}{miss('nmap')} [dim](genera traffico verso i bersagli)[/dim]")
+        lines.append(f"  [{theme.GOLD}]◉[/] Nmap su: {_e(', '.join(t.raw for t in targets))}{miss('nmap')} [dim](genera traffico verso i bersagli)[/dim]")
     if opts.trivy_enabled():
-        lines.append(f"  [#4dabf7]●[/] Trivy: vulnerabilità e segreti in {_e(trivy_target())}{miss('trivy')} [dim](può richiedere diversi minuti)[/dim]")
+        lines.append(f"  [{theme.GOLD}]◉[/] Trivy: vulnerabilità e segreti in {_e(trivy_target())}{miss('trivy')} [dim](può richiedere diversi minuti)[/dim]")
         lines.append("    [dim]" + ("database in cache locale, nessun download" if opts.offline else
                                      "scarica il database pubblico delle vulnerabilità; nessun file viene inviato; il contenuto dei segreti non viene riportato") + "[/dim]")
     if opts.malware_enabled():
         engines = ["Defender" if malware.defender_exe() else "", "ClamAV" if runner.which("clamscan") else "", "motore interno LSTK"]
-        lines.append(f"  [#4dabf7]●[/] Antivirus ({', '.join(e for e in engines if e)}) su: {_e(', '.join(malware.default_targets('quick'))[:300])}")
+        lines.append(f"  [{theme.GOLD}]◉[/] Antivirus ({', '.join(e for e in engines if e)}) su: {_e(', '.join(malware.default_targets('quick'))[:300])}")
         lines.append("    [dim]solo rilevamento: nulla viene spostato o cancellato senza conferma (/quarantine)[/dim]")
     if opts.lynis_enabled() and not IS_WINDOWS:
-        lines.append(f"  [#4dabf7]●[/] Lynis: audit system{miss('lynis')} [dim](può richiedere alcuni minuti)[/dim]")
+        lines.append(f"  [{theme.GOLD}]◉[/] Lynis: audit system{miss('lynis')} [dim](può richiedere alcuni minuti)[/dim]")
     return "\n".join(lines)
 
 
@@ -419,7 +452,7 @@ def print_modules(a: Assessment):
     t.add_column(style="dim")
     for m in a.modules:
         t.add_row(MODULE_ICON.get(m.status, "•"), f"{m.name} [dim]{m.status}[/]", _e(m.detail))
-    console.print(Panel(t, title="Moduli", title_align="left", border_style="#3b5bdb", box=box.ROUNDED))
+    console.print(Panel(t, title="Moduli impiegati", title_align="left", border_style=theme.BORDER, box=box.ROUNDED))
 
 
 def do_scan(opts: ScanOptions) -> None:
@@ -432,7 +465,7 @@ def do_scan(opts: ScanOptions) -> None:
         return
     external = [t for t in targets if not t.is_self]
     ensure_tools(runner, wanted_tools(opts), "necessari per questa scansione")
-    console.print(Panel(describe_plan(opts, runner, targets), title="Piano di assessment", border_style="#4dabf7", box=box.ROUNDED))
+    console.print(Panel(describe_plan(opts, runner, targets), title="▲ Piano operativo", border_style=theme.GOLD, box=box.ROUNDED))
     if external:
         console.print(Panel("[bold red]ATTENZIONE: bersagli NON locali.[/bold red]\n"
                             f"{_e(', '.join(t.raw for t in external))}\n"
@@ -447,7 +480,7 @@ def do_scan(opts: ScanOptions) -> None:
         return
     total = _phases(opts)
     try:
-        with Progress(SpinnerColumn(style="#4dabf7"), TextColumn("[bold]{task.description}"), BarColumn(bar_width=28, complete_style="#5c7cfa"),
+        with Progress(SpinnerColumn("eye", style=theme.GOLD), TextColumn("[bold]{task.description}"), BarColumn(bar_width=28, complete_style=theme.GOLD, finished_style=theme.OK),
                       TextColumn("{task.completed}/{task.total}"), TimeElapsedColumn(), console=console) as prog:
             task = prog.add_task("Avvio…", total=total)
             first = [True]
@@ -480,7 +513,7 @@ def do_scan(opts: ScanOptions) -> None:
             console.print(msg)
         except ReportError as exc:
             console.print(f"[dim]Storico non salvato: {_e(exc)}[/dim]")
-    console.print("\n[dim]/findings elenco · /details ID dettaglio · /fix ID correzioni · /report html|sarif|all esporta · /open apre l'HTML[/dim]")
+    console.print("\n[dim]/findings elenco · /details ID dettaglio · /fix ID correzioni · /report html --open esporta e apre[/dim]")
 
 
 # --------------------------------------------------------------------------- storico e confronto
@@ -493,7 +526,7 @@ def show_history():
     if not items:
         console.print("[yellow]Storico vuoto: le scansioni completate dalla console vengono salvate automaticamente.[/yellow]")
         return
-    t = Table(title=f"Storico scansioni — {len(items)}", box=box.ROUNDED, border_style="#3b5bdb", header_style="bold #9aa5b8")
+    t = Table(title=f"Storico scansioni — {len(items)}", box=box.ROUNDED, border_style=theme.BORDER, header_style=f"bold {theme.MUTED}")
     for col in ("#", "Quando", "Run", "Host", "Modalità", "Voto", "Postura", "Δ", "crit", "alto", "medio", "basso", "Integro"):
         t.add_column(col, justify="right" if col in ("#", "Postura", "Δ", "crit", "alto", "medio", "basso") else "left", no_wrap=True)
     prev = None
@@ -505,7 +538,7 @@ def show_history():
                   *(str(e.counts.get(l, 0)) for l in LEVELS), "[#51cf66]✔[/]" if e.intact else "[#ff6b6b]✘[/]")
         prev = e.posture
     console.print(t)
-    console.print(f"Trend postura: [bold #5c7cfa]{history.sparkline([e.posture for e in items[-40:]])}[/]  "
+    console.print(f"Trend postura: [bold {theme.GOLD}]{history.sparkline([e.posture for e in items[-40:]])}[/]  "
                   f"[dim](min {min(e.posture for e in items)}, max {max(e.posture for e in items)}) · /diff A B con # o ID di run[/dim]")
 
 
@@ -545,7 +578,7 @@ def show_diff(args: list[str]):
             f"[#4dabf7]{len(d.better)} migliorati[/]")
     for n in d.notes:
         head += f"\n[#fcc419]⚠ {_e(n)}[/]"
-    console.print(Panel(head, title=f"Confronto {_e(old['run']['id'][:8])} → {_e(new['run']['id'][:8])}", border_style="#5c7cfa", box=box.ROUNDED))
+    console.print(Panel(head, title=f"Confronto {_e(old['run']['id'][:8])} → {_e(new['run']['id'][:8])}", border_style=theme.GOLD, box=box.ROUNDED))
 
     def table(title, rows, color):
         if not rows:
@@ -596,44 +629,9 @@ def show_details(m) -> None:
         f"{chip(m.risk_level)} {STATUS_ICON.get(m.status, _e(m.status))}  [bold]{_e(m.title)}[/bold]\n"
         f"[dim]ID {_e(m.id)} · fonte {_e(m.source)} · categoria {_e(m.category)} · gravità {m.severity} · confidenza {m.confidence}[/dim]\n"
         f"Rischio: P{m.likelihood} × I{m.impact} = [bold]{m.risk_score}[/bold]\n\n"
-        f"[bold #4dabf7]Evidenza[/]\n{_e(m.evidence)}\n\n[bold #51cf66]Raccomandazione[/]\n{_e(m.recommendation)}{refs}\n\n"
+        f"[bold {theme.ACCENT}]Evidenza[/]\n{_e(m.evidence)}\n\n[bold #51cf66]Raccomandazione[/]\n{_e(m.recommendation)}{refs}\n\n"
         f"[dim]/fix {_e(m.id)} per i comandi di correzione suggeriti[/dim]",
         title="Dettaglio controllo", expand=True, border_style=LEVEL_FG.get(m.risk_level, "white"), box=box.ROUNDED))
-
-
-CHECKS_LINUX = [
-    ("sistema", "OS, kernel, contesto/privilegi, container, riavvio richiesto"),
-    ("pacchetti", "gestore e aggiornamenti in sospeso (da cache locale, sola lettura)"),
-    ("firewall", "servizi attivi e, come root, regole nft/iptables"),
-    ("ssh", "configurazione effettiva (sshd -T come root) o file con Include; cifrari deboli"),
-    ("account", "UID 0, password vuote, sudo NOPASSWD, scadenza password"),
-    ("filesystem", "permessi file critici, mount /tmp, SUID e directory world-writable (deep/full)"),
-    ("kernel", "parametri sysctl di hardening"),
-    ("hardening", "SELinux/AppArmor, logging, auditd, NTP, cifratura disco"),
-    ("servizi", "servizi abilitati e legacy (deep/full)"),
-    ("integrità file", "dpkg --verify / rpm -Va; file world-writable e orfani (deep/full)"),
-    ("vulnerabilità (Trivy)", "CVE di pacchetti OS e librerie, segreti nei file, OS fuori supporto (full)"),
-    ("rete (Nmap)", "porte TCP (UDP top-50 come root in full), servizi/versioni, esposizione loopback vs rete"),
-    ("antivirus (full, /av)", "ClamAV + motore interno (EICAR, elenchi di hash, euristiche); quarantena ripristinabile"),
-    ("Lynis", "audit completo importato come finding (warning/suggerimenti, hardening index)"),
-]
-CHECKS_WINDOWS = [
-    ("sistema", "versione e ciclo di vita di Windows (fine supporto), riavvio in sospeso, privilegi"),
-    ("aggiornamenti", "aggiornamenti in sospeso (dati locali di Windows Update), ultimo hotfix, servizio wuauserv"),
-    ("antimalware", "Defender in tempo reale, firme, Tamper Protection, esclusioni rischiose, PUA, regole ASR, antivirus di terze parti"),
-    ("firewall", "profili Dominio/Privato/Pubblico e azione predefinita in ingresso"),
-    ("account", "UAC, Guest, Administrator integrato, account senza password, membri Administrators, policy password/blocco"),
-    ("credenziali", "WDigest, protezione LSA (RunAsPPL), NTLMv1/LM, Credential Guard e VBS"),
-    ("cifratura e avvio", "BitLocker/Crittografia dispositivo, Secure Boot"),
-    ("rete", "SMBv1, firma SMB, condivisioni, LLMNR, porte TCP in ascolto con processo"),
-    ("hardening", "PowerShell 2.0, Script Block Logging, AutoRun, SmartScreen"),
-    ("accesso remoto e servizi", "RDP e NLA, WinRM, OpenSSH, Spooler (server), Telnet/FTP/SNMP/Registro remoto/UPnP"),
-    ("privilege escalation (deep/full)", "percorsi dei servizi senza virgolette, cartelle del PATH scrivibili, programmi in avvio automatico"),
-    ("integrità (deep/full)", "firma Authenticode degli eseguibili dei servizi"),
-    ("vulnerabilità (Trivy, full)", "librerie vulnerabili e segreti nei file del profilo utente"),
-    ("antivirus (full, /av)", "Microsoft Defender (senza rimozione automatica) + ClamAV se presente + motore interno; quarantena ripristinabile"),
-    ("rete (Nmap)", "porte TCP, servizi/versioni, esposizione loopback vs rete (SYN/UDP con Npcap e amministratore)"),
-]
 
 
 def _run_single_module(cmd: str, args: list[str]) -> None:
@@ -710,7 +708,7 @@ def av_update(runner: Runner, confirm: bool = True, log=None) -> bool:
     if confirm:
         console.print(Panel("\n".join(f"[dim]{_e(' '.join(c))}[/dim]" for c in cmds) +
                             "\n\nScarica le firme ufficiali e aggiorna SOLO il database dell'antivirus.",
-                            title="Aggiornamento firme", border_style="#4dabf7", box=box.ROUNDED))
+                            title="Aggiornamento firme", border_style=theme.GOLD, box=box.ROUNDED))
         if not Confirm.ask("Procedere?", default=True):
             return False
     ok = True
@@ -735,7 +733,7 @@ def show_av(out) -> None:
     t.add_column(style="dim")
     for e in out.engines:
         t.add_row(MODULE_ICON.get(e.status, "•"), f"{e.engine} [dim]{e.status}[/]", _e(e.detail))
-    console.print(Panel(t, title="Motori antivirus", title_align="left", border_style="#3b5bdb", box=box.ROUNDED))
+    console.print(Panel(t, title="Motori antivirus", title_align="left", border_style=theme.BORDER, box=box.ROUNDED))
     issues = [f for f in out.findings if f.status in ("fail", "warn", "unknown", "manual")]
     if issues:
         show_findings(_sorted(issues), "Antivirus")
@@ -767,7 +765,7 @@ def offer_quarantine(dets) -> None:
 def do_av(args: list[str]) -> None:
     runner = Runner()
     if args and args[0].lower() == "update":
-        av_update(runner)
+        console.print(f"[dim]Le firme ora si aggiornano con[/] [bold {theme.ACCENT}]/update[/] [dim](insieme a tutti gli altri strumenti).[/]")
         return
     try:
         av = parse_av_args(args)
@@ -786,7 +784,7 @@ def do_av(args: list[str]) -> None:
     note = ("scansione completa del disco: può richiedere molto tempo" if av.mode == "full" and not av.items
             else "solo lettura: nulla viene spostato senza conferma")
     console.print(Panel(f"Motori: [bold]{_e(', '.join(engines))}[/bold]\nPercorsi: {_e(', '.join(targets))}\n[dim]{note}[/dim]",
-                        title="Scansione antivirus", border_style="#4dabf7", box=box.ROUNDED))
+                        title="Scansione antivirus", border_style=theme.GOLD, box=box.ROUNDED))
     if not Confirm.ask("Avviare la scansione?", default=True):
         return
     from .risk import score_finding
@@ -817,7 +815,7 @@ def show_quarantine() -> None:
     if not its:
         console.print(f"[dim]Quarantena vuota ({_e(d)}).[/dim]")
         return
-    table = Table(title=f"Quarantena — {len(its)}", caption=_e(str(d)), box=box.ROUNDED, border_style="#3b5bdb", header_style="bold #9aa5b8")
+    table = Table(title=f"Quarantena — {len(its)}", caption=_e(str(d)), box=box.ROUNDED, border_style=theme.BORDER, header_style=f"bold {theme.MUTED}")
     for col in ("ID", "Data", "File originale", "Motivo", "Byte"):
         table.add_column(col, overflow="fold", no_wrap=col in ("ID", "Byte"))
     for it in its:
@@ -864,17 +862,11 @@ def command(line: str) -> bool:
     a: Optional[Assessment] = STATE["assessment"]
     if cmd in ("/exit", "/quit", "exit", "quit"):
         return False
-    if cmd in ("/help", "help", "/?"):
+    if cmd in ("/help", "help"):
         print_help()
     elif cmd == "/clear":
         console.clear()
         banner()
-    elif cmd == "/status":
-        console.print(Panel(f"LSTK {__version__} · {OS_LABEL}\nSistema: {_e(platform.platform())}\nPrivilegi: {admin_word() if is_root() else 'utente'}\n"
-                            f"Profilo: {STATE['profile']}\nUltimo audit: {STATE['last_scan'] or 'nessuno'}\n"
-                            f"Controlli in memoria: {len(a.findings) if a else 0}\n"
-                            f"Storico: {'attivo' if history.enabled() else 'disattivato (LSTK_NO_HISTORY)'}",
-                            title="Stato", border_style="#3b5bdb", box=box.ROUNDED))
     elif cmd == "/profile":
         if not args:
             console.print(f"Profilo corrente: [cyan]{STATE['profile']}[/cyan]. Uso: /profile desktop|server")
@@ -894,20 +886,13 @@ def command(line: str) -> bool:
         if not a:
             console.print("[yellow]Nessun risultato disponibile. Esegui prima /scan.[/yellow]")
         else:
-            flt = args[0] if args else "issues"
-            if flt not in ("issues", "all", "unverified", *LEVELS):
-                console.print("Uso: /findings [issues|all|critical|high|medium|low|unverified]")
-            else:
+            flt = args[0].lower() if args else "issues"
+            if len(args) <= 1 and flt in ("issues", "all", "unverified", *LEVELS):
                 show_findings(filter_findings(a.findings, flt), f"Controlli ({flt})")
-    elif cmd == "/search":
-        if not args:
-            console.print("Uso: /search TESTO")
-        elif not a:
-            console.print("[yellow]Nessun risultato disponibile. Esegui prima /scan.[/yellow]")
-        else:
-            q = " ".join(args).lower()
-            show_findings(_sorted([f for f in a.findings if q in f.id.lower() or q in f.title.lower() or q in f.evidence.lower()
-                                   or q in f.category.lower()]), f"Ricerca «{q}»")
+            else:
+                q = " ".join(args).lower()
+                show_findings(_sorted([f for f in a.findings if q in f.id.lower() or q in f.title.lower() or q in f.evidence.lower()
+                                       or q in f.category.lower()]), f"Ricerca «{q}»")
     elif cmd == "/details":
         if not args:
             console.print("Uso: /details ID")
@@ -925,8 +910,6 @@ def command(line: str) -> bool:
             console.print(f"Uso: /report [{'|'.join(FORMATS)}|all] [--open]")
         else:
             export_report(fmt, open_after="--open" in args)
-    elif cmd == "/open":
-        open_html()
     elif cmd == "/history":
         show_history()
     elif cmd == "/diff":
@@ -939,13 +922,6 @@ def command(line: str) -> bool:
             for ok, msg in res.checks:
                 console.print(f"  {'[green]✔[/green]' if ok else '[yellow]–[/yellow]' if ok is None else '[red]✘[/red]'} {_e(msg)}")
             console.print("[green]Rapporto integro.[/green]" if res.ok else "[red]Verifica NON superata.[/red]")
-    elif cmd == "/checks":
-        table = Table(title=f"Controlli implementati ({OS_LABEL})", box=box.ROUNDED, border_style="#3b5bdb")
-        table.add_column("Area", style="cyan")
-        table.add_column("Copertura")
-        for x, y in (CHECKS_WINDOWS if IS_WINDOWS else CHECKS_LINUX):
-            table.add_row(x, y)
-        console.print(table)
     elif cmd == "/doctor":
         doctor(Runner())
     elif cmd == "/install":
@@ -960,7 +936,9 @@ def command(line: str) -> bool:
             ensure_tools(runner, wanted)
     elif cmd in ("/vuln", "/integrity"):
         _run_single_module(cmd, args)
-    elif cmd in ("/av", "/antivirus"):
+    elif cmd == "/update":
+        do_update(Runner())
+    elif cmd == "/av":
         do_av(args)
     elif cmd == "/quarantine":
         do_quarantine(args)
@@ -989,16 +967,17 @@ def main(ctx: typer.Context):
     """Avvia la console interattiva LSTK."""
     if ctx.invoked_subcommand is not None:
         return
-    banner()
+    banner(animate=True)
     while True:
         try:
-            line = Prompt.ask("[bold #5c7cfa]lstk[/] [dim]›[/dim]")
+            line = Prompt.ask(f"[bold {theme.GOLD}]▲[/] [bold]lstk[/][dim]@{_e(platform.node()[:20])} ›[/dim]")
             if not command(line):
                 break
         except (KeyboardInterrupt, EOFError):
-            console.print("\n[dim]Uscita dalla console.[/dim]")
+            console.print()
             break
-    console.print("[dim]LSTK terminato.[/dim]")
+    theme.outro(console)
+    console.print(f"[{theme.MUTED}]▲ Canale chiuso. L'occhio si riposa.[/]")
 
 
 @app.command()
@@ -1116,6 +1095,30 @@ def install(tools: Optional[List[str]] = typer.Argument(None, help="nmap, trivy 
     for r in results:
         typer.echo(f"{'OK ' if r.ok else 'ERR'} {r.tool}: {r.detail}")
     raise typer.Exit(0 if results and all(r.ok for r in results) else 1)
+
+
+@app.command(name="update")
+def update_cmd(yes: bool = typer.Option(False, "--yes", "-y", help="Non chiedere conferma"),
+               no_python: bool = typer.Option(False, "--no-python", help="Non aggiornare le librerie Python (typer, rich)")):
+    """Aggiorna gli strumenti già installati (nmap, lynis, clamav, trivy…), il database di Trivy, le firme antivirus e le librerie Python."""
+    runner = Runner()
+    try:
+        steps = installer.plan_update(runner, signatures=malware.update_commands(runner), python=False if no_python else None)
+    except installer.InstallError as exc:
+        typer.echo(f"Errore: {exc}", err=True)
+        raise typer.Exit(2)
+    if not steps:
+        typer.echo("Niente da aggiornare: nessuno strumento installato (usa 'lstk install').")
+        raise typer.Exit(0)
+    for st in steps:
+        typer.echo(f"  - {st.description}" + (f"\n      {' '.join(st.argv)}" if st.argv else ""))
+    if not yes and not typer.confirm("Questo modifica il sistema (aggiorna software). Procedere?", default=False):
+        typer.echo("Annullato.")
+        raise typer.Exit(1)
+    results = installer.run_update(runner, steps, root=is_root(), log=typer.echo)
+    for r in results:
+        typer.echo(f"{'OK ' if r.ok else 'ERR'} {r.tool}: {r.detail}")
+    raise typer.Exit(0 if all(r.ok for r in results) else 1)
 
 
 @app.command(name="doctor")

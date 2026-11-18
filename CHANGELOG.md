@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.0
+### Nuovo
+- **Grafica "classificata"** (`lstk/theme.py`): tema oro su nero, piramide con l'occhio nel banner, timbri TOP SECRET / EYES ONLY, gruppi della guida rinominati (Ricognizione, Controspionaggio, Dossier, Archivio, Arsenale), prompt `▲ lstk@host ›`.
+- **Animazioni**: all'avvio la piramide si costruisce dal basso, l'occhio si apre, brilla, si guarda intorno e il titolo si decifra; all'uscita l'occhio si chiude; spinner a forma di occhio durante le scansioni. Solo su terminale, saltabile con Ctrl+C, disattivabile con `LSTK_NO_ANIM=1`.
+- **`/update`** e `lstk update [--yes] [--no-python]`: aggiorna gli strumenti già installati (gestore pacchetti o winget), Trivy alla versione fissata con verifica SHA-256 se più vecchio, il database di Trivy, le firme antivirus e le librerie Python nel virtualenv. Non installa nulla di nuovo; ogni passo è indipendente.
+### Rimossi
+- `/status`, `/checks`, `/open` (usare `/report html --open`), `/search` (ora `/findings TESTO`), `/av update` (incluso in `/update`), alias `/antivirus` e `/?`.
+
 ## 0.8.0
 ### Nuovo
 - **Antivirus** (`lstk/malware.py`): ricerca di malware con più motori, risultati uniti per file come finding del risk assessment.

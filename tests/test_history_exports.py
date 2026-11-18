@@ -121,7 +121,8 @@ def test_fix_suggestions():
 def test_console_new_commands_do_not_crash():
     f = F("FW-001", title="[bold red]x[/]", evidence="[link=http://evil]y[/link]")
     cli.STATE["assessment"] = assessment([f, F("B-2", "low", "warn")])
-    for line in ("/fix FW-001", "/fix NOPE", "/search fw", "/search", "/history", "/diff", "/risk", "/help", "/checks", "/status", "/report bogus"):
+    for line in ("/fix FW-001", "/fix NOPE", "/findings fw", "/findings firewall rule", "/history", "/diff", "/risk", "/help", "/report bogus",
+                 "/av update", "/status"):
         assert cli.command(line) is True
     cli.STATE["assessment"] = None
 
