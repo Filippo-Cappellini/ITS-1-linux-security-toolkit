@@ -128,12 +128,13 @@ def banner(animate: bool = False):
         body = Table.grid(padding=(0, 4))
         body.add_column(no_wrap=True, vertical="middle")
         body.add_column(no_wrap=True, vertical="middle")
-        body.add_row(theme.pyramid("open"), logo())
-        body = Group(body, Rule(style=theme.GOLD_DIM), info)
+        body.add_row(theme.pyramid("open", rays=True), logo())
+        body = Group(body, Rule(f"[{theme.CYAN}]◄ ◉ ►[/]", style=theme.GOLD_DIM), info)
     else:
-        body = Group(theme.pyramid("open"), Text(""), logo(), Rule(style=theme.GOLD_DIM), info)
+        body = Group(theme.pyramid("open", rays=True), Text(""), logo(), Rule(f"[{theme.CYAN}]◄ ◉ ►[/]", style=theme.GOLD_DIM), info)
     console.print(Panel(body, border_style=theme.GOLD, box=box.DOUBLE, padding=(1, 2),
-                        title=f"[{theme.GOLD}]▲ ACCESSO RISERVATO ▲[/]", subtitle="[dim]classificazione: riservatissimo[/]"))
+                        title=f"[{theme.GOLD}]▲ ACCESSO RISERVATO ▲[/]",
+                        subtitle=f"[{theme.CYAN}]classificazione:[/] [dim]riservatissimo[/]"))
     console.print(f"  [bold {theme.ACCENT}]/scan[/] avvia la ricognizione · [bold {theme.ACCENT}]/help[/] i protocolli · "
                   f"[bold {theme.ACCENT}]/update[/] aggiorna l'arsenale · [dim]nulla parte da solo[/]\n")
 
