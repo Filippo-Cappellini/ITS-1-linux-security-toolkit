@@ -115,3 +115,23 @@ def test_cli_web_json_on_loopback(monkeypatch):
 
 def test_cli_web_rejects_bad_url():
     assert CliRunner().invoke(cli.app, ["web", "not-a-url"]).exit_code != 0
+
+
+def test_console_web_prompts_for_url_when_missing(monkeypatch):
+    # /web senza URL: la persona lo digita; vuoto = annulla (nessuna analisi)
+    monkeypatch.setattr(cli.Prompt, "ask", lambda *a, **k: "")
+    called = []
+    monkeypatch.setattr(cli, "run_webscan", lambda *a, **k: called.append(1))
+    assert cli.command("/web") is True and called == []
+
+
+def test_console_web_uses_prompted_url(monkeypatch):
+    http, tls = make_transport({"content-security-policy": "default-src 'self'"},
+                               options_allow="GET", tls=TlsInfo("TLSv1.3", "Jan 1 2099", 400))
+    real = webscan.run_webscan
+    monkeypatch.setattr(cli.Prompt, "ask", lambda *a, **k: "https://127.0.0.1")
+    monkeypatch.setattr(cli.Confirm, "ask", lambda *a, **k: True)
+    monkeypatch.setattr(cli, "run_webscan", lambda url, **kw: real(url, http_request=http, tls_probe=tls))
+    assert cli.command("/web") is True
+    assert cli.STATE["web_findings"]
+    cli.STATE["web_findings"] = []

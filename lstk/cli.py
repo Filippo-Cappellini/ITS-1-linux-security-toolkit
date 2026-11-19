@@ -370,15 +370,18 @@ def show_web(out, title: str) -> None:
 
 
 def do_web(args: list[str]) -> None:
-    if not args:
-        console.print("Uso: /web URL [--insecure]  (analisi esterna NON intrusiva: header di sicurezza, TLS, cookie, metodi)")
-        return
     insecure = "--insecure" in args
     url = next((a for a in args if not a.startswith("--")), "")
+    if not url:                      # nessun URL indicato: lo chiediamo (la persona sceglie la sua web app)
+        console.print("[dim]Analisi esterna NON intrusiva di una web application (header di sicurezza, TLS, cookie, metodi).[/dim]")
+        url = Prompt.ask(f"[bold {theme.ACCENT}]URL della web application da analizzare[/] [dim](es. https://… — vuoto per annullare)[/dim]").strip()
+        if not url:
+            console.print("Analisi annullata.")
+            return
     try:
         full, host, port = normalize_url(url)
     except WebScanError as exc:
-        console.print(f"[red]URL non valido:[/red] {_e(exc)}")
+        console.print(f"[red]URL non valido:[/red] {_e(exc)} [dim]Deve iniziare con http:// o https://[/dim]")
         return
     console.print(Panel(
         f"Bersaglio: [bold]{_e(full)}[/]  [dim](host {_e(host)}:{port})[/]\n"
