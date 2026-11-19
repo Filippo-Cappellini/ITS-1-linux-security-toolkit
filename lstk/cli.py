@@ -39,6 +39,8 @@ from .risk import LEVELS
 from .runner import Runner, is_root
 from .scan import MODE_TABLE, MODES, PROFILES, Assessment, AuthorizationError, ModuleResult, ScanOptions, resolve_targets, run_assessment
 from .webscan import WebScanError, host_is_loopback, normalize_url, run_webscan
+from .sourcescan import run_sourcescan
+from .dbcheck import run_dbcheck
 
 app = typer.Typer(add_completion=False, no_args_is_help=False, help="LSTK Security Toolkit (Linux e Windows)")
 console = Console(highlight=False)
@@ -68,7 +70,9 @@ HELP_GROUPS = [
         ("   --offline", "Trivy usa solo il database in cache"),
         ("/vuln · /integrity" + ("" if IS_WINDOWS else " · /lynis"), "Esegue un singolo modulo"),
         ("/web URL [--insecure]", "Analisi esterna NON intrusiva di una web app (header, TLS, cookie, metodi)"),
-        ("   /scan --web URL", "Include l'analisi web nella stessa tabella e nello stesso report dello scan"),
+        ("/source CARTELLA", "Analisi statica del codice sorgente (euristiche + Semgrep se presente)"),
+        ("/dbcheck PERCORSO", "Config e permessi del database (postgresql.conf/pg_hba.conf, sola lettura)"),
+        ("   /scan --web URL --source DIR --db-config PATH", "Tutto nella stessa tabella e nello stesso report"),
         ("/profile desktop|server", "Mostra o cambia profilo"),
     ]),
     ("Controspionaggio (antivirus)", [
@@ -446,6 +450,55 @@ def do_web(args: list[str]) -> None:
     offer_web_report(full, out)
 
 
+def _show_outcome(out, title: str) -> None:
+    from .risk import assess, score_finding
+    for f in out.findings:
+        score_finding(f)
+    console.print(f"[dim]{_e(out.detail)}[/dim]")
+    issues = [f for f in out.findings if f.status in ("fail", "warn")]
+    if issues:
+        show_findings(_sorted(issues), title)
+    else:
+        console.print(f"[{theme.OK}]✔ Nessun problema rilevato.[/]")
+    s = assess(list(out.findings))
+    console.print(f"[dim]Postura indicativa:[/] [bold {GRADE_COLOR.get(s.grade, 'white')}]{s.grade}[/] "
+                  f"[dim]({s.posture_score}/100) · rischio = impatto × probabilità · /details ID · /fix ID[/dim]")
+
+
+def do_source(args: list[str]) -> None:
+    path = args[0] if args else Prompt.ask(f"[bold {theme.ACCENT}]Cartella del codice sorgente da analizzare[/] [dim](vuoto per annullare)[/dim]").strip()
+    if not path:
+        console.print("Analisi annullata.")
+        return
+    console.print(Panel(f"Analisi [bold]statica[/] (sola lettura) del codice in [bold]{_e(path)}[/].\n"
+                        "Euristiche interne di LSTK + Semgrep (se installato). [bold]Il codice non viene eseguito.[/]",
+                        title="▲ Analisi del codice sorgente", border_style=theme.GOLD, box=box.ROUNDED))
+    with console.status("[cyan]Analisi del sorgente in corso…"):
+        out = run_sourcescan(path)
+    if out.status == "failed":
+        console.print(f"[red]Errore:[/red] {_e(out.detail)}")
+        return
+    STATE["web_findings"] = out.findings            # riusa il contenitore per /details e /fix
+    label = os.path.basename(path.rstrip("/\\")) or path
+    _show_outcome(out, f"Codice · {label}")
+
+
+def do_dbcheck(args: list[str]) -> None:
+    path = args[0] if args else Prompt.ask(f"[bold {theme.ACCENT}]Percorso di postgresql.conf / pg_hba.conf (o cartella)[/] [dim](vuoto per annullare)[/dim]").strip()
+    if not path:
+        console.print("Analisi annullata.")
+        return
+    console.print(Panel(f"Controllo [bold]in sola lettura[/] della configurazione del database in [bold]{_e(path)}[/].\n"
+                        "Legge postgresql.conf e pg_hba.conf: [bold]nessuna connessione e nessuna credenziale.[/]",
+                        title="▲ Configurazione del database", border_style=theme.GOLD, box=box.ROUNDED))
+    out = run_dbcheck(path)
+    if out.status == "failed":
+        console.print(f"[red]Errore:[/red] {_e(out.detail)}")
+        return
+    STATE["web_findings"] = out.findings
+    _show_outcome(out, "Database")
+
+
 def plan_update(runner: Runner) -> list:
     return installer.plan_update(runner, signatures=malware.update_commands(runner))
 
@@ -514,11 +567,14 @@ def parse_scan_args(args: list[str]) -> ScanOptions:
     p.add_argument("--offline", action="store_true")
     p.add_argument("--web", action="append", default=[])
     p.add_argument("--web-insecure", action="store_true")
+    p.add_argument("--source", action="append", default=[])
+    p.add_argument("--db-config", action="append", default=[])
     ns = p.parse_args(args)
     return ScanOptions(profile=STATE["profile"], mode=ns.mode, targets=ns.target, use_nmap=not ns.no_nmap,
                        use_lynis=False if ns.no_lynis else None, use_trivy=False if ns.no_trivy else None,
                        use_integrity=False if ns.no_integrity else None, offline=ns.offline,
-                       use_malware=False if ns.no_malware else None, web_targets=ns.web, web_insecure=ns.web_insecure)
+                       use_malware=False if ns.no_malware else None, web_targets=ns.web, web_insecure=ns.web_insecure,
+                       source_paths=ns.source, db_configs=ns.db_config)
 
 
 def describe_plan(opts: ScanOptions, runner: Runner, targets) -> str:
@@ -551,12 +607,18 @@ def describe_plan(opts: ScanOptions, runner: Runner, targets) -> str:
     if opts.web_enabled():
         lines.append(f"  [{theme.GOLD}]◉[/] Analisi esterna web su: {_e(', '.join(opts.web_targets))} "
                      "[dim](non intrusiva: header di sicurezza, TLS, cookie, metodi; nessun attacco)[/dim]")
+    if opts.source_paths:
+        lines.append(f"  [{theme.GOLD}]◉[/] Analisi statica del codice sorgente: {_e(', '.join(opts.source_paths))} "
+                     "[dim](euristiche interne + Semgrep se presente; sola lettura)[/dim]")
+    if opts.db_configs:
+        lines.append(f"  [{theme.GOLD}]◉[/] Configurazione del database: {_e(', '.join(opts.db_configs))} "
+                     "[dim](legge postgresql.conf/pg_hba.conf; nessuna connessione)[/dim]")
     return "\n".join(lines)
 
 
 def _phases(opts: ScanOptions) -> int:
     return (2 + int(opts.integrity_enabled()) + int(opts.use_nmap) + int(opts.trivy_enabled()) + int(opts.malware_enabled())
-            + int(opts.lynis_enabled() and not IS_WINDOWS) + len(opts.web_targets))
+            + int(opts.lynis_enabled() and not IS_WINDOWS) + len(opts.web_targets) + len(opts.source_paths) + len(opts.db_configs))
 
 
 def print_modules(a: Assessment):
@@ -1060,6 +1122,10 @@ def command(line: str) -> bool:
         do_update(Runner())
     elif cmd == "/web":
         do_web(args)
+    elif cmd == "/source":
+        do_source(args)
+    elif cmd in ("/dbcheck", "/db"):
+        do_dbcheck(args)
     elif cmd == "/av":
         do_av(args)
     elif cmd == "/quarantine":
@@ -1113,6 +1179,8 @@ def scan(profile: str = typer.Option("desktop", help="Profilo: desktop o server"
          no_malware: bool = typer.Option(False, "--no-malware", help="Non eseguire l'antivirus"),
          web: Optional[List[str]] = typer.Option(None, "--web", help="URL di una web app da analizzare dall'esterno (non intrusivo; ripetibile)"),
          web_insecure: bool = typer.Option(False, "--web-insecure", help="Analisi web: accetta un certificato TLS non verificabile (tipico in rete locale)"),
+         source: Optional[List[str]] = typer.Option(None, "--source", help="Cartella del codice sorgente per l'analisi statica (ripetibile)"),
+         db_config: Optional[List[str]] = typer.Option(None, "--db-config", help="postgresql.conf/pg_hba.conf o cartella del DB (ripetibile)"),
          install_missing: bool = typer.Option(False, "--install-missing", help="Installa gli strumenti mancanti prima della scansione (modifica il sistema; consenso esplicito)"),
          save: bool = typer.Option(False, "--save", help="Salva anche i rapporti JSON+HTML in lstk-reports/"),
          keep_history: bool = typer.Option(False, "--history", help="Salva la scansione nello storico (per history e diff)"),
@@ -1133,7 +1201,8 @@ def scan(profile: str = typer.Option("desktop", help="Profilo: desktop o server"
     opts = ScanOptions(profile=profile, mode=mode, targets=list(target or []), authorized=authorized,
                        use_nmap=not no_nmap, use_lynis=False if no_lynis else None,
                        use_trivy=False if no_trivy else None, use_integrity=False if no_integrity else None, offline=offline,
-                       use_malware=False if no_malware else None, web_targets=list(web or []), web_insecure=web_insecure)
+                       use_malware=False if no_malware else None, web_targets=list(web or []), web_insecure=web_insecure,
+                       source_paths=list(source or []), db_configs=list(db_config or []))
     runner = Runner()
     installs: list = []
     if install_missing:
@@ -1228,6 +1297,54 @@ def web_cmd(url: str = typer.Argument(..., help="URL della web application (es. 
             open_html()
         except ReportError as exc:
             typer.echo(f"Report non creato: {exc}", err=True)
+    if fail_on != "none":
+        order = ["low", "medium", "high", "critical"]
+        if summary.overall_level in order and order.index(summary.overall_level) >= order.index(fail_on):
+            raise typer.Exit(3)
+
+
+@app.command(name="source")
+def source_cmd(path: str = typer.Argument(..., help="Cartella del codice sorgente da analizzare staticamente"),
+               no_semgrep: bool = typer.Option(False, "--no-semgrep", help="Non usare Semgrep (solo euristiche interne)"),
+               fmt: str = typer.Option("table", "--format", "-f", help="table | json"),
+               fail_on: str = typer.Option("none", "--fail-on", help="Exit code 3 se il rischio è >= none|low|medium|high|critical")):
+    """Analisi STATICA del codice sorgente (sola lettura): euristiche interne + Semgrep se installato."""
+    if fmt not in ("table", "json"):
+        raise typer.BadParameter("--format: table | json")
+    out = run_sourcescan(path, use_semgrep=not no_semgrep)
+    if out.status == "failed":
+        typer.echo(f"Errore: {out.detail}", err=True)
+        raise typer.Exit(1)
+    _emit_outcome(out, fmt, path, fail_on)
+
+
+@app.command(name="dbcheck")
+def dbcheck_cmd(path: str = typer.Argument(..., help="postgresql.conf / pg_hba.conf oppure la cartella che li contiene"),
+                fmt: str = typer.Option("table", "--format", "-f", help="table | json"),
+                fail_on: str = typer.Option("none", "--fail-on", help="Exit code 3 se il rischio è >= none|low|medium|high|critical")):
+    """Controllo di configurazione e permessi del database PostgreSQL (sola lettura; nessuna connessione)."""
+    if fmt not in ("table", "json"):
+        raise typer.BadParameter("--format: table | json")
+    out = run_dbcheck(path)
+    if out.status == "failed":
+        typer.echo(f"Errore: {out.detail}", err=True)
+        raise typer.Exit(1)
+    _emit_outcome(out, fmt, path, fail_on)
+
+
+def _emit_outcome(out, fmt: str, label: str, fail_on: str) -> None:
+    from .risk import assess, score_finding
+    for f in out.findings:
+        score_finding(f)
+    summary = assess(list(out.findings))
+    if fmt == "json":
+        typer.echo(json.dumps({"target": label, "status": out.status, "detail": out.detail,
+                               "summary": summary.to_dict(), "findings": [f.to_dict() for f in out.findings]},
+                              ensure_ascii=False, indent=2))
+    else:
+        if not console.is_terminal:
+            console.width = max(console.width, 160)
+        _show_outcome(out, label)
     if fail_on != "none":
         order = ["low", "medium", "high", "critical"]
         if summary.overall_level in order and order.index(summary.overall_level) >= order.index(fail_on):

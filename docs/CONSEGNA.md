@@ -12,6 +12,8 @@ la fase di **penetration testing**, che va svolta a parte.
 |---|---|
 | Analisi **esterna** dell'URL (configurazione di sicurezza) | `lstk web URL` oppure `lstk scan --web URL` — **non intrusivo, sola lettura** |
 | Analisi **interna** della macchina (processi, servizi, configurazione, permessi) | `lstk scan` eseguito **sulla macchina** (localmente o via SSH) |
+| **Analisi statica del codice sorgente** | `lstk source CARTELLA` (euristiche interne + Semgrep) |
+| Configurazione e **permessi del database** | `lstk dbcheck PERCORSO` (legge postgresql.conf/pg_hba.conf) |
 | Configurazione e **permessi del database** | controlli nativi + ispezione manuale (sezione sotto) |
 | **Integrazione di ≥ 2 fonti in un'unica tabella** | `lstk scan --web URL`: controlli nativi + Nmap + Trivy + Lynis + analisi web nello stesso report |
 | **Rischio = impatto × probabilità** per ogni problema, con evidenze | nativo nel risk engine (matrice 5×5, voto A–F) |
@@ -64,8 +66,8 @@ sudo lstk scan --mode full \
      --web https://127.0.0.1 --web-insecure --authorized \
      --save --history --format table
 
-# Report completo (tabella unica + file)
-sudo lstk scan --mode full --web https://127.0.0.1 --web-insecure --authorized --save
+# Report completo: interno + esterno + codice + database, tutto in un'unica tabella e in un report
+sudo lstk scan --mode full      --web https://127.0.0.1 --web-insecure --authorized      --source /opt/tono      --db-config /etc/postgresql/15/main      --save
 #   -> genera lstk-reports/audit-*.json e audit-*.html (con hash SHA-256)
 ```
 
@@ -87,7 +89,12 @@ psql -U tonecraft -c "\dp"
 ss -ltnp | grep 5432
 ```
 
-## 4. Penetration testing (manuale) — template da compilare
+## 4. Penetration testing
+
+La fase di penetration testing è documentata in **[PENTEST.md](PENTEST.md)** (verifiche, esiti, evidenze, rischio).
+Sotto resta il template, da usare per nuove verifiche.
+
+### Template da compilare
 
 Da svolgere **solo** su un bersaglio di cui sei titolare o per cui hai autorizzazione scritta, idealmente su una copia
 di Tono in laboratorio. Per ogni verifica compila:

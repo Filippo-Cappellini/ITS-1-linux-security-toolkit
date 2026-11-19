@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.11.0
+### Nuovo
+- **Analisi statica del codice sorgente** (`lstk/sourcescan.py`): comando `lstk source` / `/source` / `scan --source`. Due fonti: euristiche interne (segreti nel codice, eval/exec, comandi shell, SQL concatenato, XSS nel DOM, TLS verify off) e Semgrep se installato. Sola lettura, il codice non viene eseguito; salta node_modules/.git/venv/dist.
+- **Configurazione e permessi del database** (`lstk/dbcheck.py`): comando `lstk dbcheck` / `/dbcheck` / `scan --db-config`. Legge postgresql.conf e pg_hba.conf (listen_addresses, trust/password/regole 0.0.0.0/0, ssl off, password_encryption md5, permessi dei file). Nessuna connessione né credenziali.
+- Entrambi integrati nello stesso Assessment/report degli altri moduli, con rischio = impatto x probabilita'.
+- **docs/PENTEST.md**: report della fase di penetration testing (manuale). **docs/screenshot-report.svg**: screenshot del report.
+### Correzioni
+- f-string con backslash incompatibile con Python 3.10 (Raspberry/CI): corretta.
+
+
 ## 0.10.0
 ### Nuovo
 - **Analisi esterna non intrusiva di una web application** (`lstk/webscan.py`): comando `/web URL` e `lstk web URL`, oppure `lstk scan --web URL` per includerla nello stesso assessment.

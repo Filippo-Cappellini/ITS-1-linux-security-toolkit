@@ -23,6 +23,8 @@ from .risk import RiskSummary, assess
 from .runner import Execution, Runner, is_root
 from .trivy import run_trivy
 from .webscan import WebScanError, host_is_loopback, normalize_url, run_webscan
+from .sourcescan import run_sourcescan
+from .dbcheck import run_dbcheck
 
 MODES = ("quick", "deep", "full")
 PROFILES = ("desktop", "server")
@@ -58,6 +60,8 @@ class ScanOptions:
     use_malware: bool | None = None                # None = in base alla modalità (solo full): antivirus sui percorsi a rischio
     web_targets: list = field(default_factory=list)  # URL di web application da analizzare dall'esterno (non intrusivo)
     web_insecure: bool = False                      # TLS: leggi comunque un certificato non verificabile (rete locale)
+    source_paths: list = field(default_factory=list)  # cartelle di sorgente per l'analisi statica del codice
+    db_configs: list = field(default_factory=list)   # file/cartelle di configurazione del database (PostgreSQL)
 
     def web_enabled(self) -> bool:
         return bool(self.web_targets)
@@ -279,6 +283,36 @@ def run_assessment(opts: ScanOptions, runner: Runner | None = None, progress=Non
         partial.append("analisi web: solo configurazione esposta (header, TLS, cookie); il penetration testing attivo va svolto e documentato a parte")
     else:
         modules.append(ModuleResult("web", "skipped", "nessuna web application indicata (usa --web URL)"))
+
+    if opts.source_paths:
+        for src in opts.source_paths:
+            say(f"Analisi statica del codice sorgente in {src}…")
+            try:
+                out = run_sourcescan(src, runner=runner)
+                findings += out.findings
+                modules.append(ModuleResult(f"codice:{src}", "ok" if out.status == "ok" else "partial", out.detail))
+                if out.status != "ok":
+                    partial.append(f"Analisi del codice {src}: {out.detail}")
+            except Exception as exc:
+                modules.append(ModuleResult(f"codice:{src}", "failed", f"{type(exc).__name__}: {exc}"))
+                partial.append(f"analisi del codice {src} fallita")
+    else:
+        modules.append(ModuleResult("codice", "skipped", "nessun sorgente indicato (usa --source CARTELLA)"))
+
+    if opts.db_configs:
+        for dbc in opts.db_configs:
+            say(f"Controllo della configurazione del database in {dbc}…")
+            try:
+                out = run_dbcheck(dbc)
+                findings += out.findings
+                modules.append(ModuleResult(f"database:{dbc}", "ok" if out.status == "ok" else ("partial" if out.status == "partial" else "failed"), out.detail))
+                if out.status == "failed":
+                    partial.append(f"Config database {dbc}: {out.detail}")
+            except Exception as exc:
+                modules.append(ModuleResult(f"database:{dbc}", "failed", f"{type(exc).__name__}: {exc}"))
+                partial.append(f"controllo database {dbc} fallito")
+    else:
+        modules.append(ModuleResult("database", "skipped", "nessuna configurazione DB indicata (usa --db-config PERCORSO)"))
 
     if not root:
         partial.append("eseguito senza privilegi di amministratore: esclusioni Defender, SMB, BitLocker dettagliato e scansione SYN non verificabili"

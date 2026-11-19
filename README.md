@@ -1,4 +1,4 @@
-# LSTK · Security Toolkit e antivirus per Linux e Windows (v0.10.0)
+# LSTK · Security Toolkit e antivirus per Linux e Windows (v0.11.0)
 
 **Assessment di sicurezza automatico, in sola lettura, con risk assessment `rischio = probabilità × impatto`, e antivirus con quarantena.**
 Gira su **Linux** e, da questa versione, anche su **Windows 10/11**: stesso comando, stessa console, stesso rapporto.
@@ -33,6 +33,16 @@ cd ITS-1-linux-security-toolkit
 `run.ps1` propone di riaprirsi come amministratore (finestra UAC) per la copertura completa; `.\run.ps1 -NoElevate` resta utente normale.
 
 Nel prompt `lstk ›` scrivi `/scan` e conferma. Senza console interattiva: `./run.sh scan --format table` (Linux) o `.\run.bat scan --format table` (Windows).
+
+## Novità della 0.11.0: analisi interna del codice e del database, report di PT
+
+- **Analisi statica del codice sorgente** (`lstk source CARTELLA`, `/source`, `scan --source`): in sola lettura, **due fonti** — euristiche interne di LSTK (segreti scritti nel codice, `eval`/`exec`, comandi di sistema, SQL concatenato, XSS nel DOM, verifica TLS disattivata) e **Semgrep** se installato. Il codice non viene mai eseguito.
+- **Configurazione e permessi del database** (`lstk dbcheck PERCORSO`, `/dbcheck`, `scan --db-config`): legge `postgresql.conf` e `pg_hba.conf` (ascolto su tutte le interfacce, `trust`/password in chiaro, regole aperte a Internet, SSL off, cifratura password debole, permessi dei file). **Nessuna connessione, nessuna credenziale.**
+- Entrambi confluiscono nella **stessa tabella e nello stesso report** di tutte le altre fonti, con **rischio = impatto × probabilità**.
+- **[docs/PENTEST.md](docs/PENTEST.md)**: report della fase di penetration testing (svolta a mano in laboratorio) con verifiche, esiti, evidenze e rischio.
+- **Screenshot** del report: `docs/screenshot-report.svg`.
+
+![Esempio di report LSTK](docs/screenshot-report.svg)
 
 ## Novità della 0.10.0: analisi esterna di una web application
 
@@ -116,7 +126,8 @@ P = probabilità (1–5), I = impatto (1–5). Livelli: critical ≥ 20, high �
 
 ```text
 Ricognizione  /scan [quick|deep|full] [--target T] [--no-nmap|--no-trivy|--no-malware|--no-integrity|--no-lynis] [--offline]
-              /vuln · /integrity · /lynis (solo Linux) · /web URL · /scan --web URL · /profile desktop|server
+              /vuln · /integrity · /lynis (solo Linux) · /profile desktop|server
+Web/Codice/DB /web URL · /source CARTELLA · /dbcheck PERCORSO · /scan --web URL --source DIR --db-config PATH
 Antivirus     /av [quick|full|PERCORSO…] [--native] [--hashes FILE] · /quarantine [add|restore|delete]
 Dossier       /risk · /findings [issues|all|critical|high|medium|low|unverified|TESTO] · /details ID · /fix ID
 Archivio      /report [json|html|sarif|csv|md|all] [--open] · /history · /diff [A] [B] · /verify FILE
@@ -131,6 +142,8 @@ lstk scan --mode full --save --history --fail-on high > out.json # JSON + rappor
 lstk scan --format sarif > lstk.sarif                            # per GitHub code scanning
 lstk scan --mode full --web https://tono.local --authorized      # interno + esterno nello stesso report
 lstk web https://tono.local --format json > web.json             # solo analisi esterna non intrusiva
+lstk source ./app                                                # analisi statica del codice sorgente
+lstk dbcheck /etc/postgresql/15/main                             # config e permessi del database (PostgreSQL)
 lstk history ; lstk diff ; lstk export lstk-reports/history/scan-XXXX.json --format html
 lstk install trivy --yes ; lstk update --yes ; lstk doctor ; lstk verify lstk-reports/audit-XXXX.json
 ```
