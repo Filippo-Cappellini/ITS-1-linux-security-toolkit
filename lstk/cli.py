@@ -5,9 +5,18 @@ import json
 import os
 import platform
 import shlex
+import sys
 import webbrowser
 from pathlib import Path
 from typing import List, Optional
+
+# L'output usa glifi Unicode (✔, ▲, box). Su console Windows non-UTF-8 (code page 1252) print andrebbe in
+# UnicodeEncodeError se LSTK non viene avviato tramite run.ps1. Forziamo UTF-8 così parte da qualsiasi shell.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, OSError, ValueError):
+        pass
 
 import typer
 from rich import box
