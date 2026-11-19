@@ -135,8 +135,9 @@ def banner(animate: bool = False):
     console.print(Panel(body, border_style=theme.GOLD, box=box.DOUBLE, padding=(1, 2),
                         title=f"[{theme.GOLD}]▲ ACCESSO RISERVATO ▲[/]",
                         subtitle=f"[{theme.CYAN}]classificazione:[/] [dim]riservatissimo[/]"))
-    console.print(f"  [bold {theme.ACCENT}]/scan[/] avvia la ricognizione · [bold {theme.ACCENT}]/help[/] i protocolli · "
-                  f"[bold {theme.ACCENT}]/update[/] aggiorna l'arsenale · [dim]nulla parte da solo[/]\n")
+    console.print(f"  [bold {theme.ACCENT}]/scan[/] ricognizione del sistema · [bold {theme.ACCENT}]/web[/] analizza una web app · "
+                  f"[bold {theme.ACCENT}]/help[/] i protocolli · [bold {theme.ACCENT}]/update[/] aggiorna l'arsenale\n"
+                  f"  [dim]nulla parte da solo: nessun bersaglio viene toccato finché non lo indichi tu[/]\n")
 
 
 def print_help():
