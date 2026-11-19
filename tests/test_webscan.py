@@ -125,6 +125,18 @@ def test_console_web_prompts_for_url_when_missing(monkeypatch):
     assert cli.command("/web") is True and called == []
 
 
+def test_web_assessment_builds_html_report():
+    http, tls = make_transport({"server": "nginx/1.18.0"}, cookies=["sid=x; Path=/"],
+                               options_allow="GET, POST", tls=TlsInfo("TLSv1.2", "Jan 1 2099", 200))
+    out = run_webscan("https://tono.local", http_request=http, tls_probe=tls)
+    a = cli.web_assessment("https://tono.local", out)
+    from lstk.report import build_payload, render_html
+    p = build_payload(a)
+    assert p["findings"] and p["summary"]["grade"] in "ABCDF"
+    html = render_html(p)
+    assert "WEB-" in html and "<html" in html.lower()
+
+
 def test_console_web_uses_prompted_url(monkeypatch):
     http, tls = make_transport({"content-security-policy": "default-src 'self'"},
                                options_allow="GET", tls=TlsInfo("TLSv1.3", "Jan 1 2099", 400))
@@ -132,6 +144,7 @@ def test_console_web_uses_prompted_url(monkeypatch):
     monkeypatch.setattr(cli.Prompt, "ask", lambda *a, **k: "https://127.0.0.1")
     monkeypatch.setattr(cli.Confirm, "ask", lambda *a, **k: True)
     monkeypatch.setattr(cli, "run_webscan", lambda url, **kw: real(url, http_request=http, tls_probe=tls))
+    monkeypatch.setattr(cli, "open_html", lambda: None)   # mai aprire un browser nei test
     assert cli.command("/web") is True
     assert cli.STATE["web_findings"]
     cli.STATE["web_findings"] = []

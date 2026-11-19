@@ -6,6 +6,7 @@
   - Solo lettura (GET/OPTIONS + lettura del certificato TLS su https): header di sicurezza (CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy), flag dei cookie (Secure/HttpOnly/SameSite), protocollo e scadenza del certificato, metodi HTTP dichiarati, divulgazione di versione (Server/X-Powered-By), redirect http->https.
   - Finding con `source="web"` e id `WEB-*`, valutati dal risk engine esistente (rischio = impatto x probabilita') e uniti nella stessa tabella/report dei finding interni.
   - Nessun payload d'attacco, nessuna iniezione/fuzzing/exploit: e' una revisione della postura esposta, non un penetration test. Autorizzazione richiesta (`AUTORIZZO`/`--authorized`) per bersagli non loopback; `--web-insecure` per certificati interni di rete locale.
+- **Report grafico anche per `/web`**: al termine di `/web` LSTK propone di aprire il report HTML nel browser; `lstk web URL --open` lo genera e apre in modo non interattivo (`cli.web_assessment` costruisce un Assessment minimo dai finding web).
 - **docs/CONSEGNA.md**: guida per la consegna (prerequisiti, URL, accessi a macchina e database, permessi, comandi) e template per documentare la fase di penetration testing, svolta a parte.
 ### Note
 - La fase di penetration testing attiva non e' automatizzata per scelta: LSTK resta uno strumento difensivo in sola lettura.

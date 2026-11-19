@@ -37,7 +37,7 @@ from .osinfo import IS_WINDOWS, admin_word, system_name
 from .report import FORMATS, RENDER, ReportError, build_payload, verify_report, write_report
 from .risk import LEVELS
 from .runner import Runner, is_root
-from .scan import MODE_TABLE, MODES, PROFILES, Assessment, AuthorizationError, ScanOptions, resolve_targets, run_assessment
+from .scan import MODE_TABLE, MODES, PROFILES, Assessment, AuthorizationError, ModuleResult, ScanOptions, resolve_targets, run_assessment
 from .webscan import WebScanError, host_is_loopback, normalize_url, run_webscan
 
 app = typer.Typer(add_completion=False, no_args_is_help=False, help="LSTK Security Toolkit (Linux e Windows)")
@@ -280,6 +280,38 @@ def open_html():
     console.print(f"[dim]Aperto nel browser: {_e(path)}[/dim]")
 
 
+def web_assessment(url: str, out) -> Assessment:
+    """Costruisce un Assessment minimo dai risultati di /web, così si può generare il report (HTML grafico, JSON, ...)."""
+    from datetime import datetime
+    from .risk import assess
+    host = (out.info or {}).get("host", "")
+    ts = datetime.now().astimezone().isoformat(timespec="seconds")
+    opts = ScanOptions(mode="quick", web_targets=[url])
+    scope = {"type": "web", "targets": [], "web_targets": [url],
+             "authorization": {"required": not host_is_loopback(host), "declared": True,
+                               "note": "Analisi esterna non intrusiva (sola lettura) dell'URL indicato."}}
+    summary = assess(list(out.findings))
+    modules = [ModuleResult(f"web:{host}", "ok" if out.status == "ok" else "failed", out.detail)]
+    host_info = {"hostname": host, "os": "", "platform": "windows" if IS_WINDOWS else "linux", "url": url}
+    return Assessment(os.urandom(8).hex(), ts, ts, opts, is_root(), list(out.findings), modules, summary, [], scope, host_info)
+
+
+def offer_web_report(url: str, out) -> None:
+    """Propone di aprire il report grafico nel browser (una pagina chiara, adatta anche ai meno esperti)."""
+    if not Confirm.ask("Aprire il report grafico nel browser? [dim](una pagina chiara, adatta anche ai meno esperti)[/dim]", default=True):
+        console.print(f"[dim]Puoi sempre rigenerarlo: imposta /web … e poi usa questo menu, oppure 'lstk web {_e(url)} --open'.[/dim]")
+        return
+    try:
+        payload = build_payload(web_assessment(url, out))
+        path = write_report(payload, "html")
+    except ReportError as exc:
+        console.print(f"[red]Report non creato:[/red] {_e(exc)}")
+        return
+    STATE["last_html"] = path
+    console.print(f"[{theme.OK}]✔ Report grafico salvato:[/] {_e(path)} [dim](+ .sha256)[/dim]")
+    open_html()
+
+
 # --------------------------------------------------------------------------- installazione strumenti mancanti
 def show_install_results(results) -> None:
     for r in results:
@@ -411,6 +443,7 @@ def do_web(args: list[str]) -> None:
     STATE["web_findings"] = out.findings
     console.print(f"[dim]{_e(out.detail)}[/dim]")
     show_web(out, f"Analisi esterna · {host}")
+    offer_web_report(full, out)
 
 
 def plan_update(runner: Runner) -> list:
@@ -1156,6 +1189,7 @@ def web_cmd(url: str = typer.Argument(..., help="URL della web application (es. 
             insecure: bool = typer.Option(False, "--insecure", help="Accetta un certificato TLS non verificabile (tipico in rete locale)"),
             authorized: bool = typer.Option(False, "--authorized", help="Dichiaro di essere autorizzato ad analizzare questo bersaglio"),
             fmt: str = typer.Option("table", "--format", "-f", help="table | json"),
+            open_report: bool = typer.Option(False, "--open", help="Genera e apre il report grafico HTML nel browser (chiaro anche per i meno esperti)"),
             fail_on: str = typer.Option("none", "--fail-on", help="Exit code 3 se il rischio esterno è >= none|low|medium|high|critical")):
     """Analisi ESTERNA non intrusiva di una web app: header di sicurezza, TLS, cookie, metodi. Nessun attacco, nessun penetration test."""
     if fmt not in ("table", "json"):
@@ -1186,6 +1220,14 @@ def web_cmd(url: str = typer.Argument(..., help="URL della web application (es. 
         if not console.is_terminal:
             console.width = max(console.width, 160)
         show_web(out, f"Analisi esterna · {host}")
+    if open_report:
+        try:
+            path = write_report(build_payload(web_assessment(full, out)), "html")
+            STATE["last_html"] = path
+            typer.echo(f"Report grafico: {path}")
+            open_html()
+        except ReportError as exc:
+            typer.echo(f"Report non creato: {exc}", err=True)
     if fail_on != "none":
         order = ["low", "medium", "high", "critical"]
         if summary.overall_level in order and order.index(summary.overall_level) >= order.index(fail_on):

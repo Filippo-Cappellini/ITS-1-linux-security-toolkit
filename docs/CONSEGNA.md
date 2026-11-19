@@ -41,6 +41,9 @@ lstk web https://tono.esempio.it --authorized --format json > web.json
 
 # Certificato interno (CA privata di rete locale): leggilo comunque e documentalo
 lstk web https://tono.local --web-insecure
+
+# Report grafico HTML aperto nel browser (chiaro anche per i non tecnici)
+lstk web https://tono.local --open
 ```
 
 Controlli svolti (sola lettura): header di sicurezza, flag dei cookie, protocollo e scadenza del certificato TLS,

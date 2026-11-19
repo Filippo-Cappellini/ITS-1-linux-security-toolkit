@@ -38,6 +38,7 @@ Nel prompt `lstk ›` scrivi `/scan` e conferma. Senza console interattiva: `./r
 
 - **`/web URL`** e **`lstk web URL`**: analisi **esterna e non intrusiva** della configurazione di sicurezza di una web app. In **sola lettura** (poche richieste GET/OPTIONS e, su https, una connessione TLS per leggere il certificato): header di sicurezza (CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy), flag dei cookie (Secure/HttpOnly/SameSite), protocollo e scadenza del certificato TLS, metodi HTTP dichiarati, divulgazione di prodotto/versione, redirect http→https.
 - **Nessun attacco**: niente payload, iniezioni, fuzzing o exploit. È una revisione della postura esposta, **non un penetration test**. Il PT attivo va svolto e documentato a parte, su un bersaglio autorizzato (vedi [docs/CONSEGNA.md](docs/CONSEGNA.md)).
+- **Report grafico**: dopo `/web` LSTK propone di aprire un **report HTML** nel browser (pagina chiara, adatta anche ai meno esperti); da riga di comando `lstk web URL --open`.
 - **Integrazione**: con `lstk scan --web URL` i finding esterni entrano nella **stessa tabella** e nello **stesso report** di quelli interni (controlli nativi, Nmap, Trivy, Lynis, antivirus), tutti con **rischio = impatto × probabilità**. Autorizzazione richiesta (`AUTORIZZO` / `--authorized`) se il bersaglio non è loopback.
 - **Nota sui rilevatori di scansioni**: se il bersaglio ha una difesa anti-scanner (come la «Guardia» di Tono), può bannare l'IP dell'analizzatore. Mettilo tra i consentiti o disattivala per la durata del test.
 
