@@ -18,6 +18,7 @@
 - [ ] Correzioni applicate con conferma, validazione per distribuzione e rollback
 - [ ] Baseline CIS/SCAP e controlli di compliance
 - [x] Vulnerabilità dei pacchetti e segreti nei file (Trivy) e integrità dei file di pacchetto
+- [x] Analisi esterna non intrusiva di una web application (header di sicurezza, TLS, cookie, metodi) integrata nel risk assessment
 - [ ] Correlazione CVE per i servizi rilevati da Nmap (versioni in ascolto)
 - [x] Antivirus: Defender, ClamAV e motore interno (hash ed euristiche), quarantena ripristinabile
 - [ ] Rilevamento rootkit e file aggiunti (AIDE/rkhunter/chkrootkit) e controllo di integrità continuo

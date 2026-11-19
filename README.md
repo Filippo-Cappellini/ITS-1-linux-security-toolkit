@@ -1,4 +1,4 @@
-# LSTK · Security Toolkit e antivirus per Linux e Windows (v0.9.0)
+# LSTK · Security Toolkit e antivirus per Linux e Windows (v0.10.0)
 
 **Assessment di sicurezza automatico, in sola lettura, con risk assessment `rischio = probabilità × impatto`, e antivirus con quarantena.**
 Gira su **Linux** e, da questa versione, anche su **Windows 10/11**: stesso comando, stessa console, stesso rapporto.
@@ -33,6 +33,13 @@ cd ITS-1-linux-security-toolkit
 `run.ps1` propone di riaprirsi come amministratore (finestra UAC) per la copertura completa; `.\run.ps1 -NoElevate` resta utente normale.
 
 Nel prompt `lstk ›` scrivi `/scan` e conferma. Senza console interattiva: `./run.sh scan --format table` (Linux) o `.\run.bat scan --format table` (Windows).
+
+## Novità della 0.10.0: analisi esterna di una web application
+
+- **`/web URL`** e **`lstk web URL`**: analisi **esterna e non intrusiva** della configurazione di sicurezza di una web app. In **sola lettura** (poche richieste GET/OPTIONS e, su https, una connessione TLS per leggere il certificato): header di sicurezza (CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy), flag dei cookie (Secure/HttpOnly/SameSite), protocollo e scadenza del certificato TLS, metodi HTTP dichiarati, divulgazione di prodotto/versione, redirect http→https.
+- **Nessun attacco**: niente payload, iniezioni, fuzzing o exploit. È una revisione della postura esposta, **non un penetration test**. Il PT attivo va svolto e documentato a parte, su un bersaglio autorizzato (vedi [docs/CONSEGNA.md](docs/CONSEGNA.md)).
+- **Integrazione**: con `lstk scan --web URL` i finding esterni entrano nella **stessa tabella** e nello **stesso report** di quelli interni (controlli nativi, Nmap, Trivy, Lynis, antivirus), tutti con **rischio = impatto × probabilità**. Autorizzazione richiesta (`AUTORIZZO` / `--authorized`) se il bersaglio non è loopback.
+- **Nota sui rilevatori di scansioni**: se il bersaglio ha una difesa anti-scanner (come la «Guardia» di Tono), può bannare l'IP dell'analizzatore. Mettilo tra i consentiti o disattivala per la durata del test.
 
 ## Novità della 0.9.0: grafica "classificata" e `/update`
 
@@ -108,7 +115,7 @@ P = probabilità (1–5), I = impatto (1–5). Livelli: critical ≥ 20, high �
 
 ```text
 Ricognizione  /scan [quick|deep|full] [--target T] [--no-nmap|--no-trivy|--no-malware|--no-integrity|--no-lynis] [--offline]
-              /vuln · /integrity · /lynis (solo Linux) · /profile desktop|server
+              /vuln · /integrity · /lynis (solo Linux) · /web URL · /scan --web URL · /profile desktop|server
 Antivirus     /av [quick|full|PERCORSO…] [--native] [--hashes FILE] · /quarantine [add|restore|delete]
 Dossier       /risk · /findings [issues|all|critical|high|medium|low|unverified|TESTO] · /details ID · /fix ID
 Archivio      /report [json|html|sarif|csv|md|all] [--open] · /history · /diff [A] [B] · /verify FILE
@@ -121,6 +128,8 @@ Modalità non interattiva (risultato su stdout, avanzamento su stderr):
 lstk scan --profile server --mode full --format table           # tabella di rischio
 lstk scan --mode full --save --history --fail-on high > out.json # JSON + rapporti + storico; exit 3 se rischio >= high
 lstk scan --format sarif > lstk.sarif                            # per GitHub code scanning
+lstk scan --mode full --web https://tono.local --authorized      # interno + esterno nello stesso report
+lstk web https://tono.local --format json > web.json             # solo analisi esterna non intrusiva
 lstk history ; lstk diff ; lstk export lstk-reports/history/scan-XXXX.json --format html
 lstk install trivy --yes ; lstk update --yes ; lstk doctor ; lstk verify lstk-reports/audit-XXXX.json
 ```
@@ -132,6 +141,7 @@ Exit code: `0` ok · `1` errore · `2` argomenti/autorizzazione non validi · `3
 - **Linux**: testato su Ubuntu 22.04/24.04 (Debian, Kali, Fedora, Rocky previsti). Pacchetti installati da `install.sh` o `/install` su richiesta: `nmap`, `lynis`, `iproute2`, `clamav`, Trivy (release ufficiale con SHA-256 fissato nel codice).
 - **Windows**: Windows 10/11 con PowerShell 5.1 (incluso). Nmap e Trivy opzionali, installabili con `winget` da `install.ps1` o `/install`. Per scansioni SYN/UDP serve [Npcap](https://npcap.com/) (incluso nell'installer di Nmap) e l'amministratore.
 - **Privilegi**: root (Linux) o amministratore (Windows) per l'audit completo. Senza funziona, ma la valutazione è **parziale** (voto massimo B).
+- **Analisi web (`/web`, `--web`)**: solo `http`/`https`; richieste in sola lettura verso l'URL indicato, nessuna dipendenza esterna (usa la libreria standard di Python). Su rete locale con certificato interno usa `--web-insecure` per leggerlo comunque, documentandolo.
 - **Rete**: nessuna connessione propria. Nmap contatta solo i bersagli indicati; Trivy scarica il database pubblico delle vulnerabilità (`--offline` per usare solo la cache); su Windows il controllo degli aggiornamenti usa i dati **locali** di Windows Update.
 
 ## Parametri utili
@@ -156,7 +166,7 @@ Exit code: `0` ok · `1` errore · `2` argomenti/autorizzazione non validi · `3
 
 ## Sicurezza dello strumento
 
-- `/scan` è **in sola lettura** su entrambi i sistemi (su Windows solo letture del registro e cmdlet `Get-*`, verificato dai test). Modificano il sistema solo l'installer, l'aggiornamento delle firme (`/av update`) e la quarantena, sempre dopo conferma esplicita. La quarantena rifiuta i link simbolici, cancella l'originale solo dopo aver verificato la copia e il ripristino non sovrascrive mai.
+- `/scan` è **in sola lettura** su entrambi i sistemi (su Windows solo letture del registro e cmdlet `Get-*`, verificato dai test). Modificano il sistema solo l'installer, l'aggiornamento (`/update`) e la quarantena, sempre dopo conferma esplicita. La quarantena rifiuta i link simbolici, cancella l'originale solo dopo aver verificato la copia e il ripristino non sovrascrive mai.
 - Nessuna shell; binari risolti solo in directory di sistema (anti PATH-hijacking); ambiente minimo; timeout con kill dell'albero di processi. Gli script PowerShell passano come `-EncodedCommand` (nessun problema di quoting o iniezione) e compaiono nel rapporto con un'etichetta leggibile.
 - Bersagli non locali solo con autorizzazione dichiarata; input validato.
 - Rapporti con SHA-256 + HMAC opzionale (`lstk verify`), elenco dei comandi eseguiti, limiti dichiarati. HTML con CSP `default-src 'none'` e nessuno script; CSV protetto dalla formula injection.

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.10.0
+### Nuovo
+- **Analisi esterna non intrusiva di una web application** (`lstk/webscan.py`): comando `/web URL` e `lstk web URL`, oppure `lstk scan --web URL` per includerla nello stesso assessment.
+  - Solo lettura (GET/OPTIONS + lettura del certificato TLS su https): header di sicurezza (CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy), flag dei cookie (Secure/HttpOnly/SameSite), protocollo e scadenza del certificato, metodi HTTP dichiarati, divulgazione di versione (Server/X-Powered-By), redirect http->https.
+  - Finding con `source="web"` e id `WEB-*`, valutati dal risk engine esistente (rischio = impatto x probabilita') e uniti nella stessa tabella/report dei finding interni.
+  - Nessun payload d'attacco, nessuna iniezione/fuzzing/exploit: e' una revisione della postura esposta, non un penetration test. Autorizzazione richiesta (`AUTORIZZO`/`--authorized`) per bersagli non loopback; `--web-insecure` per certificati interni di rete locale.
+- **docs/CONSEGNA.md**: guida per la consegna (prerequisiti, URL, accessi a macchina e database, permessi, comandi) e template per documentare la fase di penetration testing, svolta a parte.
+### Note
+- La fase di penetration testing attiva non e' automatizzata per scelta: LSTK resta uno strumento difensivo in sola lettura.
+
+
 ## 0.9.0
 ### Nuovo
 - **Grafica "classificata"** (`lstk/theme.py`): tema oro su nero, piramide con l'occhio nel banner, timbri TOP SECRET / EYES ONLY, gruppi della guida rinominati (Ricognizione, Controspionaggio, Dossier, Archivio, Arsenale), prompt `▲ lstk@host ›`.

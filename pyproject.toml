@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "linux-security-toolkit"
-version = "0.9.0"
+version = "0.10.0"
 description = "Security risk assessment toolkit and antivirus for Linux and Windows (native checks, integrity, antivirus, Nmap, Trivy, Lynis)"
 readme = "README.md"
 requires-python = ">=3.10"

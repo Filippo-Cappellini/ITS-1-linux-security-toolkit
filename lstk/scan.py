@@ -22,6 +22,7 @@ from .nmapscan import Target, TargetError, local_addresses, run_nmap, validate_t
 from .risk import RiskSummary, assess
 from .runner import Execution, Runner, is_root
 from .trivy import run_trivy
+from .webscan import WebScanError, host_is_loopback, normalize_url, run_webscan
 
 MODES = ("quick", "deep", "full")
 PROFILES = ("desktop", "server")
@@ -55,6 +56,11 @@ class ScanOptions:
     use_integrity: bool | None = None              # None = in base alla modalità (deep e full)
     offline: bool = False                          # Trivy: usa solo la cache locale del database
     use_malware: bool | None = None                # None = in base alla modalità (solo full): antivirus sui percorsi a rischio
+    web_targets: list = field(default_factory=list)  # URL di web application da analizzare dall'esterno (non intrusivo)
+    web_insecure: bool = False                      # TLS: leggi comunque un certificato non verificabile (rete locale)
+
+    def web_enabled(self) -> bool:
+        return bool(self.web_targets)
 
     def lynis_enabled(self) -> bool:
         return self.mode == "full" if self.use_lynis is None else self.use_lynis
@@ -123,13 +129,24 @@ def run_assessment(opts: ScanOptions, runner: Runner | None = None, progress=Non
     started, root = _now(), is_root()
     targets, _local = resolve_targets(opts.targets, runner)
     external = [t for t in targets if not t.is_self]
-    if external and not opts.authorized:
-        raise AuthorizationError("Bersagli non locali: serve autorizzazione esplicita (" + ", ".join(t.raw for t in external) + ").")
+    web_external: list[str] = []
+    for raw in opts.web_targets:
+        try:
+            _full, whost, _wport = normalize_url(raw)
+        except WebScanError as exc:
+            raise ValueError(str(exc))
+        if not host_is_loopback(whost):
+            web_external.append(raw)
+    needs_auth = external or web_external
+    if needs_auth and not opts.authorized:
+        raise AuthorizationError("Bersagli non locali: serve autorizzazione esplicita ("
+                                 + ", ".join([t.raw for t in external] + web_external) + ").")
     scope = {
-        "type": "locale" if not external else ("esterno" if len(external) == len(targets) else "misto"),
+        "type": "locale" if not needs_auth else ("esterno" if len(external) == len(targets) and not targets else "misto"),
         "targets": [t.raw for t in targets],
-        "authorization": {"required": bool(external), "declared": bool(external and opts.authorized),
-                          "note": "Dichiarazione dell'operatore di essere autorizzato a scansionare i bersagli non locali." if external else "Solo sistema locale."},
+        "web_targets": list(opts.web_targets),
+        "authorization": {"required": bool(needs_auth), "declared": bool(needs_auth and opts.authorized),
+                          "note": "Dichiarazione dell'operatore di essere autorizzato ad analizzare i bersagli non locali." if needs_auth else "Solo sistema locale."},
     }
     findings: list[Finding] = []
     modules: list[ModuleResult] = []
@@ -246,6 +263,22 @@ def run_assessment(opts: ScanOptions, runner: Runner | None = None, progress=Non
     else:
         modules.append(ModuleResult("lynis", "skipped", "non previsto dalla modalità o disabilitato"))
         partial.append("audit Lynis non eseguito")
+
+    if opts.web_enabled():
+        for raw in opts.web_targets:
+            say(f"Analisi esterna non intrusiva della web application {raw}…")
+            try:
+                out = run_webscan(raw, insecure=opts.web_insecure)
+                findings += out.findings
+                modules.append(ModuleResult(f"web:{raw}", "ok" if out.status == "ok" else "failed", out.detail))
+                if out.status != "ok":
+                    partial.append(f"Analisi web {raw}: {out.detail}")
+            except Exception as exc:
+                modules.append(ModuleResult(f"web:{raw}", "failed", f"{type(exc).__name__}: {exc}"))
+                partial.append(f"analisi web {raw} fallita")
+        partial.append("analisi web: solo configurazione esposta (header, TLS, cookie); il penetration testing attivo va svolto e documentato a parte")
+    else:
+        modules.append(ModuleResult("web", "skipped", "nessuna web application indicata (usa --web URL)"))
 
     if not root:
         partial.append("eseguito senza privilegi di amministratore: esclusioni Defender, SMB, BitLocker dettagliato e scansione SYN non verificabili"

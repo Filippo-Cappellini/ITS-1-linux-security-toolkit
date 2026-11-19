@@ -29,10 +29,12 @@ from .report import FORMATS, RENDER, ReportError, build_payload, verify_report, 
 from .risk import LEVELS
 from .runner import Runner, is_root
 from .scan import MODE_TABLE, MODES, PROFILES, Assessment, AuthorizationError, ScanOptions, resolve_targets, run_assessment
+from .webscan import WebScanError, host_is_loopback, normalize_url, run_webscan
 
 app = typer.Typer(add_completion=False, no_args_is_help=False, help="LSTK Security Toolkit (Linux e Windows)")
 console = Console(highlight=False)
-STATE: dict = {"profile": "desktop", "assessment": None, "last_scan": None, "installs": [], "last_html": None, "av_findings": []}
+STATE: dict = {"profile": "desktop", "assessment": None, "last_scan": None, "installs": [], "last_html": None,
+               "av_findings": [], "web_findings": []}
 
 OS_LABEL = "Windows" if IS_WINDOWS else "Linux"
 LOGO_LINES, GRADIENT = theme.LOGO_LINES, theme.GRADIENT
@@ -56,6 +58,8 @@ HELP_GROUPS = [
         ("   --no-nmap --no-trivy --no-malware --no-integrity" + ("" if IS_WINDOWS else " --no-lynis"), "Esclude un modulo (valutazione parziale)"),
         ("   --offline", "Trivy usa solo il database in cache"),
         ("/vuln · /integrity" + ("" if IS_WINDOWS else " · /lynis"), "Esegue un singolo modulo"),
+        ("/web URL [--insecure]", "Analisi esterna NON intrusiva di una web app (header, TLS, cookie, metodi)"),
+        ("   /scan --web URL", "Include l'analisi web nella stessa tabella e nello stesso report dello scan"),
         ("/profile desktop|server", "Mostra o cambia profilo"),
     ]),
     ("Controspionaggio (antivirus)", [
@@ -337,6 +341,64 @@ def doctor(runner: Runner) -> None:
     console.print(f"[dim]Privilegi: {admin_word() if is_root() else 'utente'} · gestore pacchetti: {installer.detect_manager(runner) or 'nessuno supportato'}[/dim]")
 
 
+GUARDIA_NOTE = ("[#fcc419]Nota:[/] se il bersaglio ha un rilevamento delle scansioni (come la «Guardia» di Tono), "
+                "potrebbe bannare l'IP dell'analizzatore. Mettilo tra i consentiti o disattivalo per la durata del test, "
+                "e riattivalo dopo.")
+
+
+def show_web(out, title: str) -> None:
+    from .risk import assess, score_finding
+    for f in out.findings:
+        score_finding(f)
+    issues = [f for f in out.findings if f.status in ("fail", "warn")]
+    if issues:
+        show_findings(_sorted(issues), title)
+    else:
+        console.print(f"[{theme.OK}]✔ Nessun problema di configurazione esposta rilevato.[/]")
+    s = assess(list(out.findings))
+    console.print(f"[dim]Postura esterna indicativa:[/] [bold {GRADE_COLOR.get(s.grade, 'white')}]{s.grade}[/] "
+                  f"[dim]({s.posture_score}/100) · rischio = impatto × probabilità · /details ID · /fix ID[/dim]")
+
+
+def do_web(args: list[str]) -> None:
+    if not args:
+        console.print("Uso: /web URL [--insecure]  (analisi esterna NON intrusiva: header di sicurezza, TLS, cookie, metodi)")
+        return
+    insecure = "--insecure" in args
+    url = next((a for a in args if not a.startswith("--")), "")
+    try:
+        full, host, port = normalize_url(url)
+    except WebScanError as exc:
+        console.print(f"[red]URL non valido:[/red] {_e(exc)}")
+        return
+    console.print(Panel(
+        f"Bersaglio: [bold]{_e(full)}[/]  [dim](host {_e(host)}:{port})[/]\n"
+        "Verranno fatte poche richieste in [bold]sola lettura[/] (GET e OPTIONS) e, su https, una connessione TLS per leggere il certificato.\n"
+        "[bold]Non[/] vengono inviati payload d'attacco, non si forza nulla: è una revisione della configurazione esposta, [bold]non un penetration test[/].\n"
+        + GUARDIA_NOTE,
+        title="▲ Analisi esterna della web application", border_style=theme.GOLD, box=box.ROUNDED))
+    if not host_is_loopback(host):
+        console.print(f"[#fcc419]Il bersaglio non è locale ({_e(host)}).[/] Analizza solo sistemi di cui sei il titolare o hai autorizzazione scritta.")
+        if Prompt.ask("Digita AUTORIZZO per confermare di essere autorizzato").strip() != "AUTORIZZO":
+            console.print("Analisi annullata.")
+            return
+    if not Confirm.ask("Sei sicuro di voler avviare l'analisi?", default=False):
+        console.print("Analisi annullata.")
+        return
+    try:
+        with console.status("[cyan]Analisi esterna in corso…"):
+            out = run_webscan(full, insecure=insecure)
+    except WebScanError as exc:
+        console.print(f"[red]Errore:[/red] {_e(exc)}")
+        return
+    if out.status != "ok":
+        console.print(f"[red]Analisi non riuscita:[/red] {_e(out.detail)}")
+        return
+    STATE["web_findings"] = out.findings
+    console.print(f"[dim]{_e(out.detail)}[/dim]")
+    show_web(out, f"Analisi esterna · {host}")
+
+
 def plan_update(runner: Runner) -> list:
     return installer.plan_update(runner, signatures=malware.update_commands(runner))
 
@@ -403,11 +465,13 @@ def parse_scan_args(args: list[str]) -> ScanOptions:
     p.add_argument("--no-integrity", action="store_true")
     p.add_argument("--no-malware", action="store_true")
     p.add_argument("--offline", action="store_true")
+    p.add_argument("--web", action="append", default=[])
+    p.add_argument("--web-insecure", action="store_true")
     ns = p.parse_args(args)
     return ScanOptions(profile=STATE["profile"], mode=ns.mode, targets=ns.target, use_nmap=not ns.no_nmap,
                        use_lynis=False if ns.no_lynis else None, use_trivy=False if ns.no_trivy else None,
                        use_integrity=False if ns.no_integrity else None, offline=ns.offline,
-                       use_malware=False if ns.no_malware else None)
+                       use_malware=False if ns.no_malware else None, web_targets=ns.web, web_insecure=ns.web_insecure)
 
 
 def describe_plan(opts: ScanOptions, runner: Runner, targets) -> str:
@@ -437,12 +501,15 @@ def describe_plan(opts: ScanOptions, runner: Runner, targets) -> str:
         lines.append("    [dim]solo rilevamento: nulla viene spostato o cancellato senza conferma (/quarantine)[/dim]")
     if opts.lynis_enabled() and not IS_WINDOWS:
         lines.append(f"  [{theme.GOLD}]◉[/] Lynis: audit system{miss('lynis')} [dim](può richiedere alcuni minuti)[/dim]")
+    if opts.web_enabled():
+        lines.append(f"  [{theme.GOLD}]◉[/] Analisi esterna web su: {_e(', '.join(opts.web_targets))} "
+                     "[dim](non intrusiva: header di sicurezza, TLS, cookie, metodi; nessun attacco)[/dim]")
     return "\n".join(lines)
 
 
 def _phases(opts: ScanOptions) -> int:
     return (2 + int(opts.integrity_enabled()) + int(opts.use_nmap) + int(opts.trivy_enabled()) + int(opts.malware_enabled())
-            + int(opts.lynis_enabled() and not IS_WINDOWS))
+            + int(opts.lynis_enabled() and not IS_WINDOWS) + len(opts.web_targets))
 
 
 def print_modules(a: Assessment):
@@ -464,14 +531,20 @@ def do_scan(opts: ScanOptions) -> None:
         console.print(f"[red]Errore:[/red] {_e(exc)}")
         return
     external = [t for t in targets if not t.is_self]
+    try:
+        web_external = [w for w in opts.web_targets if not host_is_loopback(normalize_url(w)[1])]
+    except WebScanError as exc:
+        console.print(f"[red]URL non valido:[/red] {_e(exc)}")
+        return
     ensure_tools(runner, wanted_tools(opts), "necessari per questa scansione")
     console.print(Panel(describe_plan(opts, runner, targets), title="▲ Piano operativo", border_style=theme.GOLD, box=box.ROUNDED))
-    if external:
+    if external or web_external:
         console.print(Panel("[bold red]ATTENZIONE: bersagli NON locali.[/bold red]\n"
-                            f"{_e(', '.join(t.raw for t in external))}\n"
-                            "Scansionare sistemi altrui senza autorizzazione scritta può essere illegale.",
+                            f"{_e(', '.join([t.raw for t in external] + web_external))}\n"
+                            "Analizzare sistemi altrui senza autorizzazione scritta può essere illegale. "
+                            "L'analisi web è non intrusiva (solo lettura), ma vale lo stesso principio.",
                             border_style="red"))
-        if Prompt.ask("Digita AUTORIZZO per confermare di essere autorizzato a scansionarli").strip() != "AUTORIZZO":
+        if Prompt.ask("Digita AUTORIZZO per confermare di essere autorizzato ad analizzarli").strip() != "AUTORIZZO":
             console.print("Audit annullato.")
             return
         opts.authorized = True
@@ -676,8 +749,8 @@ def _run_single_module(cmd: str, args: list[str]) -> None:
 
 # --------------------------------------------------------------------------- antivirus e quarantena
 def _known_findings(a: Optional[Assessment]) -> list:
-    """Finding dell'ultimo /scan più quelli dell'ultimo /av (per /details e /fix)."""
-    return (list(a.findings) if a else []) + list(STATE["av_findings"])
+    """Finding dell'ultimo /scan più quelli dell'ultimo /av e /web (per /details e /fix)."""
+    return (list(a.findings) if a else []) + list(STATE["av_findings"]) + list(STATE["web_findings"])
 
 
 def parse_av_args(args: list[str]) -> argparse.Namespace:
@@ -938,6 +1011,8 @@ def command(line: str) -> bool:
         _run_single_module(cmd, args)
     elif cmd == "/update":
         do_update(Runner())
+    elif cmd == "/web":
+        do_web(args)
     elif cmd == "/av":
         do_av(args)
     elif cmd == "/quarantine":
@@ -989,6 +1064,8 @@ def scan(profile: str = typer.Option("desktop", help="Profilo: desktop o server"
          no_trivy: bool = typer.Option(False, "--no-trivy"), no_integrity: bool = typer.Option(False, "--no-integrity"),
          offline: bool = typer.Option(False, "--offline", help="Trivy: usa solo la cache locale del database"),
          no_malware: bool = typer.Option(False, "--no-malware", help="Non eseguire l'antivirus"),
+         web: Optional[List[str]] = typer.Option(None, "--web", help="URL di una web app da analizzare dall'esterno (non intrusivo; ripetibile)"),
+         web_insecure: bool = typer.Option(False, "--web-insecure", help="Analisi web: accetta un certificato TLS non verificabile (tipico in rete locale)"),
          install_missing: bool = typer.Option(False, "--install-missing", help="Installa gli strumenti mancanti prima della scansione (modifica il sistema; consenso esplicito)"),
          save: bool = typer.Option(False, "--save", help="Salva anche i rapporti JSON+HTML in lstk-reports/"),
          keep_history: bool = typer.Option(False, "--history", help="Salva la scansione nello storico (per history e diff)"),
@@ -1009,7 +1086,7 @@ def scan(profile: str = typer.Option("desktop", help="Profilo: desktop o server"
     opts = ScanOptions(profile=profile, mode=mode, targets=list(target or []), authorized=authorized,
                        use_nmap=not no_nmap, use_lynis=False if no_lynis else None,
                        use_trivy=False if no_trivy else None, use_integrity=False if no_integrity else None, offline=offline,
-                       use_malware=False if no_malware else None)
+                       use_malware=False if no_malware else None, web_targets=list(web or []), web_insecure=web_insecure)
     runner = Runner()
     installs: list = []
     if install_missing:
@@ -1057,6 +1134,47 @@ def scan(profile: str = typer.Option("desktop", help="Profilo: desktop o server"
     if fail_on != "none":
         order = ["low", "medium", "high", "critical"]
         if a.summary.overall_level in order and order.index(a.summary.overall_level) >= order.index(fail_on):
+            raise typer.Exit(3)
+
+
+@app.command(name="web")
+def web_cmd(url: str = typer.Argument(..., help="URL della web application (es. https://tono.local)"),
+            insecure: bool = typer.Option(False, "--insecure", help="Accetta un certificato TLS non verificabile (tipico in rete locale)"),
+            authorized: bool = typer.Option(False, "--authorized", help="Dichiaro di essere autorizzato ad analizzare questo bersaglio"),
+            fmt: str = typer.Option("table", "--format", "-f", help="table | json"),
+            fail_on: str = typer.Option("none", "--fail-on", help="Exit code 3 se il rischio esterno è >= none|low|medium|high|critical")):
+    """Analisi ESTERNA non intrusiva di una web app: header di sicurezza, TLS, cookie, metodi. Nessun attacco, nessun penetration test."""
+    if fmt not in ("table", "json"):
+        raise typer.BadParameter("--format: table | json")
+    if fail_on not in ("none", *LEVELS[::-1]):
+        raise typer.BadParameter("--fail-on: none|low|medium|high|critical")
+    try:
+        full, host, _port = normalize_url(url)
+    except WebScanError as exc:
+        raise typer.BadParameter(str(exc))
+    if not host_is_loopback(host) and not authorized:
+        typer.echo(f"Errore: {host} non è locale. Usa --authorized solo se sei il titolare o hai autorizzazione scritta.", err=True)
+        raise typer.Exit(2)
+    try:
+        out = run_webscan(full, insecure=insecure)
+    except WebScanError as exc:
+        typer.echo(f"Errore: {exc}", err=True)
+        raise typer.Exit(1)
+    from .risk import assess, score_finding
+    for f in out.findings:
+        score_finding(f)
+    summary = assess(list(out.findings))
+    if fmt == "json":
+        typer.echo(json.dumps({"url": full, "status": out.status, "detail": out.detail,
+                               "summary": summary.to_dict(), "findings": [f.to_dict() for f in out.findings]},
+                              ensure_ascii=False, indent=2))
+    else:
+        if not console.is_terminal:
+            console.width = max(console.width, 160)
+        show_web(out, f"Analisi esterna · {host}")
+    if fail_on != "none":
+        order = ["low", "medium", "high", "critical"]
+        if summary.overall_level in order and order.index(summary.overall_level) >= order.index(fail_on):
             raise typer.Exit(3)
 
 
